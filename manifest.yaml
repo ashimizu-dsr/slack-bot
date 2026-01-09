@@ -1,0 +1,51 @@
+display_information:
+  name: 勤怠Bot
+  description: 勤怠連絡を管理します
+  background_color: "#2c2d30"
+features:
+  bot_user:
+    display_name: slack-attendance-bot
+    always_online: true
+  shortcuts:
+    - name: 勤怠連絡の確認
+      type: global
+      callback_id: open_kintai_history
+      description: 自分の勤怠連絡を確認する
+    - name: 設定
+      type: global
+      callback_id: open_member_setup_modal  # 新しいID
+      description: 各課の所属メンバーを編集する
+
+  # slash_commands:
+    #- command: /kintai-setup
+      #description: 課ごとに勤怠情報を集計します。各課の所属メンバーを編集してください。
+      #usage_hint: 課の設定
+      #should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      - reactions:write
+      - chat:write
+      - im:write
+      - users:read
+      - channels:read
+      - groups:read        # 【重要】プライベートチャンネルのリスト取得に必要
+      - commands
+      - app_mentions:read
+      - im:read
+      - im:history
+      - channels:history
+      - groups:history
+      - users:read.email
+      # - authorizations:read
+settings:
+  event_subscriptions:
+    bot_events:
+      - message.channels
+      - message.im
+      - member_joined_channel
+  interactivity:
+    is_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false

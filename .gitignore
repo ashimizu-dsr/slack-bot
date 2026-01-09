@@ -1,0 +1,14 @@
+# 特定のファイルを除外
+_command_handlers.py
+.env
+
+# フォルダごと除外（末尾に / をつける）
+# node_modules/
+# temp/
+
+# 特定の拡張子をすべて除外
+*.db
+
+# Python特有のキャッシュファイル（Python開発なら推奨）
+__pycache__/
+*.py[cod]
