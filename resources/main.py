@@ -1,5 +1,18 @@
 import os
+import sys
 import logging
+
+# プロジェクトのルートディレクトリをパスに追加する（重要！）
+# これにより resources/ の外にある shared や services を読み込めるようになります
+current_dir = os.path.dirname(os.path.abspath(__file__)) # resourcesフォルダ
+project_root = os.path.dirname(current_dir)             # ルートフォルダ
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+# その後に、通常のインポートを書く
+from shared.db import init_db
+from services.attendance_service import AttendanceService
+
 from slack_bolt import App
 from slack_bolt.adapter.google_cloud_functions import SlackRequestHandler
 
