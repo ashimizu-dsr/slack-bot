@@ -1,0 +1,1 @@
+web: functions-framework --target=slack_bot --source=resources/main.py
