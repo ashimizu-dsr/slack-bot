@@ -22,4 +22,4 @@ ENV PYTHONUNBUFFERED=1
 # CMD ["functions-framework", "--target=slack_bot", "--source=/resources/main.py", "--port=8080", "--host=0.0.0.0"]
 
 # 修正後（sourceの指定を相対パスにするか、カレントディレクトリを意識する）
-CMD ["functions-framework", "--target=slack_bot", "--source=resources/main.py", "--port=8080", "--host=0.0.0.0"]
+CMD ["functions-framework", "--target=slack_bot", "--source=/app/resources/main.py", "--port=8080", "--host=0.0.0.0"]

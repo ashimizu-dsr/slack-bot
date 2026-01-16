@@ -13,6 +13,7 @@ steps:
     args: ['push', 'gcr.io/$PROJECT_ID/slack-kintai-bot:$COMMIT_SHA']
 
   # 3. Cloud Run にデプロイする
+# 3. Cloud Run にデプロイする
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -25,6 +26,14 @@ steps:
       - 'asia-northeast1'
       - '--platform'
       - 'managed'
+      # --- ここから追加 ---
+      - '--memory'
+      - '1Gi'          # メモリを 1GB に増強
+      - '--cpu'
+      - '1'            # CPU 1個をフルに割り当て（起動を速める）
+      - '--timeout'
+      - '300'          # 起動完了までの待ち時間を 300秒（5分）に延長
+      # ------------------
 
 options:
   logging: 'CLOUD_LOGGING_ONLY'
