@@ -17,7 +17,7 @@ from slack_bolt import App
 from slack_bolt.adapter.google_cloud_functions import SlackRequestHandler
 
 # 自作モジュールの読み込み
-from shared.logger import setup_logger
+from resources.shared.setup_logger import setup_logger
 from shared.db import init_db
 from services.attendance_service import AttendanceService
 from services.notification_service import NotificationService

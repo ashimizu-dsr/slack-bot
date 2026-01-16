@@ -3,7 +3,7 @@ import json
 import os
 import re
 from typing import Optional, Dict, Any, List
-from shared.logging_config import get_logger
+from shared.setup_logger import setup_logger
 
 # OpenAIのインポート（エラーハンドリング付き）
 try:
@@ -11,7 +11,7 @@ try:
 except ImportError:
     OpenAI = None
 
-logger = get_logger(__name__)
+logger = setup_logger(__name__)
 
 # ==========================================
 # 1. 定数・設定

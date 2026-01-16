@@ -6,8 +6,8 @@ import logging
 from typing import Optional
 from constants import ENABLE_CHANNEL_NLP, ATTENDANCE_CHANNEL_ID
 # 修正：nlp_service ではなく ai_service から直接呼ぶ形に変更（ファイル名に合わせて調整してください）
-from services.ai_service import extract_attendance_from_text 
-from views.modal_views import create_setup_message_blocks
+from resources.services.nlp_service import extract_attendance_from_text 
+from resources.views.modal_views import create_setup_message_blocks
 from shared.utils import get_user_email
 
 # loggerの統一

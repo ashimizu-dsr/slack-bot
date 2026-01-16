@@ -17,7 +17,7 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from shared.logging_config import get_logger
+from resources.shared.setup_logger import get_logger
 
 logger = get_logger(__name__)
 

@@ -6,3 +6,4 @@ _command_handlers.py
 __pycache__/
 *.py[cod]
 .venv/
+credentials.json

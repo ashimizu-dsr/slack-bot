@@ -1,19 +1,20 @@
-# 1. AWS Lambda専用ではなく、標準的なPythonイメージを使います
-FROM python:3.11-slim
+# 1. 軽量なPythonイメージを使用
+FROM python:3.12-slim
 
-# 2. 作業ディレクトリを設定
+# 2. コンテナ内の作業ディレクトリを設定
 WORKDIR /app
 
-# 3. まずライブラリをインストール（キャッシュを効かせるため先にコピー）
+# 3. 依存関係ファイルを先にコピー（効率的なビルドのため）
 COPY requirements.txt .
+
+# 4. ライブラリのインストール
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 4. プロジェクト全体をコピー（shared, services, resourcesなどがすべて入ります）
+# 5. ソースコードをコピー（resourcesフォルダごとコピー）
 COPY . .
 
-# 5. 環境変数 PORT を設定（Cloud Runはデフォルトで8080を使います）
-ENV PORT 8080
+# 6. 環境変数の設定（Pythonの出力をリアルタイムで見るため）
+ENV PYTHONUNBUFFERED=1
 
-# 6. 実行コマンド
-# functions-framework を使い、resources/main.py 内の slack_bot 関数を起動します
-CMD ["functions-framework", "--target=slack_bot", "--source=resources/main.py"]
+# 7. 実行コマンド（--host=0.0.0.0 が必須）
+CMD ["functions-framework", "--target=slack_bot", "--source=resources/main.py", "--port=8080", "--host=0.0.0.0"]
