@@ -1,6 +1,25 @@
-import os
 import sys
-import logging
+import os
+
+# 何よりも先にこれを出す（Cloud Logging の「stderr」に必ず載ります）
+print("DEBUG: Starting main.py", file=sys.stderr)
+print(f"DEBUG: Current working directory: {os.getcwd()}", file=sys.stderr)
+print(f"DEBUG: sys.path: {sys.path}", file=sys.stderr)
+
+# 既存のパス追加処理
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
+sys.path.insert(0, current_dir)
+
+print(f"DEBUG: Modified sys.path: {sys.path}", file=sys.stderr)
+
+# ここから import。もしここでエラーが起きても、上の print はログに残るはずです
+try:
+    from slack_bolt import App
+    print("DEBUG: slack_bolt imported", file=sys.stderr)
+except Exception as e:
+    print(f"DEBUG: Import error: {e}", file=sys.stderr)
 
 # プロジェクトのルートディレクトリをパスに追加する（重要！）
 # これにより resources/ の外にある shared や services を読み込めるようになります
