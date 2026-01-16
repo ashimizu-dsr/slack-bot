@@ -18,4 +18,4 @@ ENV PYTHONUNBUFFERED=1
 
 # 7. 実行コマンド（--host=0.0.0.0 が必須）
 # --host=0.0.0.0 が含まれているか確認
-CMD ["functions-framework", "--target=slack_bot", "--source=resources/main.py", "--port=8080", "--host=0.0.0.0"]
+CMD ["functions-framework", "--target=slack_bot", "--source=/resources/main.py", "--port=8080", "--host=0.0.0.0"]
