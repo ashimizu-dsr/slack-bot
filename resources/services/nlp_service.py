@@ -3,7 +3,7 @@ import json
 import os
 import re
 from typing import Optional, Dict, Any, List
-from shared.setup_logger import setup_logger
+from resources.shared.setup_logger import setup_logger
 
 # OpenAIのインポート（エラーハンドリング付き）
 try:

@@ -9,8 +9,8 @@ import time
 from typing import Any, Dict, List, Optional
 
 # クラウド対応済みの db 関数をインポート
-from shared.db import get_channel_members_with_section
-from constants import STATUS_TRANSLATION
+from resources.shared.db import get_channel_members_with_section
+from resources.constants import STATUS_TRANSLATION
 
 # loggerの設定
 logger = logging.getLogger(__name__)

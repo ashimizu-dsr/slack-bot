@@ -4,12 +4,12 @@ Firestore / クラウド対応版
 """
 import datetime
 import logging
-from views.modal_views import (
+from resources.views.modal_views import (
     create_attendance_modal_view, 
     create_history_modal_view,
     create_member_settings_modal_view
 )
-from shared.db import (
+from resources.shared.db import (
     get_single_attendance_record, 
     delete_attendance_record_db,
     get_channel_members_with_section

@@ -4,7 +4,7 @@ Firestore / クラウド対応版
 """
 import json
 import logging
-from shared.db import save_channel_members_db
+from resources.shared.db import save_channel_members_db
 
 # ロガーの統一
 logger = logging.getLogger(__name__)

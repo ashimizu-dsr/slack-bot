@@ -9,19 +9,15 @@ project_root = os.path.dirname(current_dir)             # ルートフォルダ
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# その後に、通常のインポートを書く
-from shared.db import init_db
-from services.attendance_service import AttendanceService
-
 from slack_bolt import App
 from slack_bolt.adapter.google_cloud_functions import SlackRequestHandler
 
 # 自作モジュールの読み込み
 from resources.shared.setup_logger import setup_logger
-from shared.db import init_db
-from services.attendance_service import AttendanceService
-from services.notification_service import NotificationService
-from handlers import register_all_handlers 
+from resources.shared.db import init_db
+from resources.services.attendance_service import AttendanceService
+from resources.services.notification_service import NotificationService
+from resources.handlers import register_all_handlers 
 
 # --- 初期化 ---
 

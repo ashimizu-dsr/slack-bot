@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import logging
 
 # db.py からクラウド対応済みの関数をインポート
-from shared.db import (
+from resources.shared.db import (
     save_attendance_record, 
     get_single_attendance_record,
     get_user_history_from_db,
@@ -16,7 +16,7 @@ from shared.db import (
     delete_attendance_record_db,
     get_channel_members_with_section
 )
-from shared.errors import ValidationError
+from resources.shared.errors import ValidationError
 
 logger = logging.getLogger(__name__)
 

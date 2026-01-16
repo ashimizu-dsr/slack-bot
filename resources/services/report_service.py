@@ -10,9 +10,9 @@ from typing import Optional
 from slack_sdk import WebClient
 
 # クラウド対応済みの db 関数をインポート
-from shared.db import init_db, get_attendance_records_by_sections
-from views.modal_views import build_daily_report_blocks
-from constants import SECTION_TRANSLATION, REPORT_CHANNEL_ID as CONST_REPORT_ID
+from resources.shared.db import init_db, get_attendance_records_by_sections
+from resources.views.modal_views import build_daily_report_blocks
+from resources.constants import SECTION_TRANSLATION, REPORT_CHANNEL_ID as CONST_REPORT_ID
 
 # loggerの設定
 logger = logging.getLogger(__name__)
