@@ -4,10 +4,17 @@ import logging
 
 # プロジェクトのルートディレクトリをパスに追加する（重要！）
 # これにより resources/ の外にある shared や services を読み込めるようになります
-current_dir = os.path.dirname(os.path.abspath(__file__)) # resourcesフォルダ
-project_root = os.path.dirname(current_dir)             # ルートフォルダ
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+
+# 1. 実行している main.py の絶対パスを取得
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# 2. その親ディレクトリ（/workspace）を取得
+parent_dir = os.path.dirname(current_dir)
+
+# 3. 親ディレクトリと自分自身のディレクトリの両方を検索パスに追加
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
 
 from slack_bolt import App
 from slack_bolt.adapter.google_cloud_functions import SlackRequestHandler
