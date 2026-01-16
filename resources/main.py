@@ -32,6 +32,8 @@ from resources.handlers import register_all_handlers
 setup_logger() # 引数なしで標準出力に流す
 init_db()
 
+print("Starting slack_bot application...") # ログエクスプローラーに出るはずです
+
 # 2. Slackアプリの準備
 # 環境変数は Google Cloud のコンソール（設定画面）で登録します
 app = App(
