@@ -1,11 +1,10 @@
 """
 Slack Event Handlers - チャンネル内の発言監視とAI解析の実行
-Cloud Run / Functions 対応版（スレッド排除版）
+Cloud Run / Lazy リスナー対応版
 """
 import logging
 from typing import Optional
 from constants import ENABLE_CHANNEL_NLP, ATTENDANCE_CHANNEL_ID
-# 修正：nlp_service ではなく ai_service から直接呼ぶ形に変更（ファイル名に合わせて調整してください）
 from resources.services.nlp_service import extract_attendance_from_text 
 from resources.views.modal_views import create_setup_message_blocks
 from resources.shared.utils import get_user_email
@@ -13,7 +12,7 @@ from resources.shared.utils import get_user_email
 # loggerの統一
 logger = logging.getLogger(__name__)
 
-# メッセージ重複防止用（クラウド環境ではメモリがリセットされるため気休め程度ですが維持します）
+# メッセージ重複防止用
 _processed_message_ts = set()
 
 def _is_likely_attendance_message(text: str) -> bool:
@@ -25,15 +24,41 @@ def _is_likely_attendance_message(text: str) -> bool:
     ]
     return text_stripped not in boring_messages
 
-def process_attendance_core(event, user_id, attendance_service, notification_service, client):
+def should_process_message(event) -> bool:
+    """メッセージを処理すべきかどうかの判定ロジック（ack用）"""
+    user_id = event.get("user")
+    text = (event.get("text") or "").strip()
+    channel = event.get("channel")
+
+    # サブタイプがある場合（編集など）やBot自身の投稿、空文字は無視
+    if event.get("subtype") or event.get("bot_id") or not user_id or not text:
+        return False
+    
+    # NLP設定が無効、または指定チャンネル以外なら無視
+    if not ENABLE_CHANNEL_NLP: return False
+    if ATTENDANCE_CHANNEL_ID and channel != ATTENDANCE_CHANNEL_ID: return False
+    
+    # 既にボットが反応した後のメッセージや、挨拶のみのメッセージは無視
+    if text.startswith(("勤怠連絡:", "✅", "ⓘ")): return False
+    if not _is_likely_attendance_message(text): return False
+    
+    return True
+
+def process_attendance_core(event, client, attendance_service, notification_service):
     """
-    AI解析を実行し、結果を保存・通知するコアロジック。
-    クラウド環境ではスレッドを使わず、このまま直列で実行します。
+    AI解析を実行し、結果を保存・通知するコアロジック（lazy用）
     """
+    user_id = event.get("user")
     workspace_id = event.get("team")
     ts = event.get("ts")
     channel = event.get("channel")
     text = (event.get("text") or "").strip()
+
+    # 二重処理防止
+    msg_key = f"{channel}:{ts}"
+    if msg_key in _processed_message_ts:
+        return
+    _processed_message_ts.add(msg_key)
 
     try:
         # 名寄せ用Email取得
@@ -59,7 +84,7 @@ def process_attendance_core(event, user_id, attendance_service, notification_ser
 
         for att in attendances:
             date = att.get("date")
-            # DB保存 (shared/db.py 経由)
+            # DB保存
             record = attendance_service.save_attendance(
                 workspace_id=workspace_id, user_id=user_id, email=email,
                 date=date, status=att.get("status"), note=att.get("note", ""), 
@@ -84,7 +109,8 @@ def process_attendance_core(event, user_id, attendance_service, notification_ser
         logger.error(f"解析・保存エラー: {e}", exc_info=True)
 
 def register_slack_handlers(app, attendance_service, notification_service) -> None:
-    
+    """ハンドラーの登録"""
+
     @app.event("member_joined_channel")
     def handle_bot_join(event, client):
         try:
@@ -98,31 +124,31 @@ def register_slack_handlers(app, attendance_service, notification_service) -> No
         except Exception as e:
             logger.error(f"初期設定送信エラー: {e}")
 
-    @app.event("message")
-    def handle_incoming_message(event, client):
-        user_id = event.get("user")
-        text = (event.get("text") or "").strip()
-        channel = event.get("channel")
-        ts = event.get("ts")
-        
-        if event.get("subtype") or event.get("bot_id") or not user_id or not text:
+    # --- 修正の目玉：Lazyリスナーの実装 ---
+    
+    def handle_incoming_message_ack(event, ack):
+        """すぐにレスポンスを返す"""
+        if should_process_message(event):
+            ack()
+        else:
+            # 処理不要な場合もackしないとSlackからリトライが来るためackする
+            ack()
+
+    def handle_incoming_message_lazy(event, client):
+        """後から重いAI処理を行う"""
+        # should_process_message を再度チェック（念のため）
+        if not should_process_message(event):
             return
+            
+        process_attendance_core(
+            event=event, 
+            client=client, 
+            attendance_service=attendance_service, 
+            notification_service=notification_service
+        )
 
-        try:
-            if not ENABLE_CHANNEL_NLP: return
-            if ATTENDANCE_CHANNEL_ID and channel != ATTENDANCE_CHANNEL_ID: return
-            if text.startswith(("勤怠連絡:", "✅", "ⓘ")): return 
-            if not _is_likely_attendance_message(text): return
-
-            # 二重処理防止
-            msg_key = f"{channel}:{ts}"
-            if msg_key in _processed_message_ts: return
-            _processed_message_ts.add(msg_key)
-
-            # --- 修正ポイント：threading は使わずに直接実行する ---
-            # Bolt の process_before_response=True 設定と組み合わせることで、
-            # クラウド環境でも解析が終わるまでインスタンスが起きていてくれます。
-            process_attendance_core(event, user_id, attendance_service, notification_service, client)
-
-        except Exception as e:
-            logger.error(f"メッセージ監視エラー: {e}")
+    # 登録
+    app.event("message")(
+        ack=handle_incoming_message_ack,
+        lazy=[handle_incoming_message_lazy]
+    )
