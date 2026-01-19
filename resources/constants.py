@@ -49,8 +49,8 @@ ENABLE_CHANNEL_NLP = os.getenv("ENABLE_CHANNEL_NLP", "true").lower() == "true"
 SLACK_CLIENT_ID = os.environ.get("SLACK_CLIENT_ID")
 SLACK_CLIENT_SECRET = os.environ.get("SLACK_CLIENT_SECRET")
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
-REPORT_CHANNEL_ID = os.environ.get("CHANNEL_ID")
-ATTENDANCE_CHANNEL_ID = os.environ.get("CHANNEL_ID")
+REPORT_CHANNEL_ID = os.environ.get("REPORT_CHANNEL_ID")
+ATTENDANCE_CHANNEL_ID = os.environ.get("CHANREPORT_CHANNEL_IDNEL_ID")
 SECTION_CHANNELS = {}
 
 # --- 3. パス設定 (追加) ---
