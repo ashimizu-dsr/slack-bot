@@ -138,6 +138,7 @@ class NotificationService:
 
         except Exception as e:
             logger.error(f"レポート生成・送信中にエラー発生: {e}", exc_info=True)
+            print(f"詳細なエラー理由: {e.response}")  # これを足す
 
         total_end = time.time()
         logger.info(f"レポート送信処理完了 所要時間: {total_end - start_time:.4f}秒")
