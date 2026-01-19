@@ -26,13 +26,13 @@ steps:
       - 'asia-northeast1'
       - '--platform'
       - 'managed'
-      # --- ここから追加 ---
       - '--memory'
       - '1Gi'          # メモリを 1GB に増強
       - '--cpu'
       - '1'            # CPU 1個をフルに割り当て（起動を速める）
       - '--timeout'
       - '300'          # 起動完了までの待ち時間を 300秒（5分）に延長
+      - '--no-cpu-throttling' # CPUを落とさない
       # ------------------
 
 options:

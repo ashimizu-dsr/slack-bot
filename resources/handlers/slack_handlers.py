@@ -1,6 +1,6 @@
 """
 Slack Event Handlers - チャンネル内の発言監視とAI解析の実行
-Cloud Run / Lazy リスナー対応版
+Cloud Run 最適化版（Lazy非使用・直列処理モデル）
 """
 import logging
 from typing import Optional
@@ -25,12 +25,12 @@ def _is_likely_attendance_message(text: str) -> bool:
     return text_stripped not in boring_messages
 
 def should_process_message(event) -> bool:
-    """メッセージを処理すべきかどうかの判定ロジック（ack用）"""
+    """メッセージを処理すべきかどうかの判定ロジック"""
     user_id = event.get("user")
     text = (event.get("text") or "").strip()
     channel = event.get("channel")
 
-    # サブタイプがある場合（編集など）やBot自身の投稿、空文字は無視
+    # サブタイプがある場合やBot自身の投稿、空文字は無視
     if event.get("subtype") or event.get("bot_id") or not user_id or not text:
         return False
     
@@ -38,7 +38,7 @@ def should_process_message(event) -> bool:
     if not ENABLE_CHANNEL_NLP: return False
     if ATTENDANCE_CHANNEL_ID and channel != ATTENDANCE_CHANNEL_ID: return False
     
-    # 既にボットが反応した後のメッセージや、挨拶のみのメッセージは無視
+    # すでにボットが反応した後のメッセージや、挨拶のみのメッセージは無視
     if text.startswith(("勤怠連絡:", "✅", "ⓘ")): return False
     if not _is_likely_attendance_message(text): return False
     
@@ -46,7 +46,7 @@ def should_process_message(event) -> bool:
 
 def process_attendance_core(event, client, attendance_service, notification_service):
     """
-    AI解析を実行し、結果を保存・通知するコアロジック（lazy用）
+    AI解析を実行し、結果を保存・通知するコアロジック
     """
     user_id = event.get("user")
     workspace_id = event.get("team")
@@ -54,9 +54,10 @@ def process_attendance_core(event, client, attendance_service, notification_serv
     channel = event.get("channel")
     text = (event.get("text") or "").strip()
 
-    # 二重処理防止
+    # 二重処理防止（Slackのリトライ対策）
     msg_key = f"{channel}:{ts}"
     if msg_key in _processed_message_ts:
+        logger.info(f"Skip duplicated message: {msg_key}")
         return
     _processed_message_ts.add(msg_key)
 
@@ -65,7 +66,7 @@ def process_attendance_core(event, client, attendance_service, notification_serv
         email: Optional[str] = get_user_email(client, user_id, logger)
         
         # AI解析の実行
-        logger.info(f"AI解析開始: user={user_id}")
+        logger.info(f"AI解析開始: user={user_id}, text={text[:20]}...")
         extraction = extract_attendance_from_text(text)
         
         if not extraction:
@@ -124,31 +125,24 @@ def register_slack_handlers(app, attendance_service, notification_service) -> No
         except Exception as e:
             logger.error(f"初期設定送信エラー: {e}")
 
-    # --- 修正の目玉：Lazyリスナーの実装 ---
-    
-    def handle_incoming_message_ack(event, ack):
-        """すぐにレスポンスを返す"""
-        if should_process_message(event):
-            ack()
-        else:
-            # 処理不要な場合もackしないとSlackからリトライが来るためackする
-            ack()
+    @app.event("message")
+    def handle_incoming_message(event, client, ack):
+        """
+        メッセージ受信ハンドラー
+        Cloud Runでは lazy を使わず、ack() の後に直接処理を書く
+        """
+        # 1. まず Slack に 200 OK を返す（3秒ルール回避）
+        ack()
 
-    def handle_incoming_message_lazy(event, client):
-        """後から重いAI処理を行う"""
-        # should_process_message を再度チェック（念のため）
+        # 2. 処理対象かどうか判定
         if not should_process_message(event):
             return
-            
+
+        # 3. そのまま重い処理（AI解析）を実行
+        # Cloud Runの --no-cpu-throttling 設定により、ack後も処理が継続されます
         process_attendance_core(
             event=event, 
             client=client, 
             attendance_service=attendance_service, 
             notification_service=notification_service
         )
-
-    # 登録
-    app.event("message")(
-        ack=handle_incoming_message_ack,
-        lazy=[handle_incoming_message_lazy]
-    )
