@@ -332,3 +332,23 @@ def create_attendance_card_blocks(record: Any, message_text: str = "", options: 
         blocks.append({"type": "actions", "elements": options})
         
     return blocks
+
+def create_delete_confirm_modal(date: str):
+    """勤怠削除の最終確認モーダル"""
+    return {
+        "type": "modal",
+        "callback_id": "delete_attendance_confirm_callback",
+        "private_metadata": date,  # 削除対象の日付を渡す
+        "title": {"type": "plain_text", "text": "勤怠の削除"},
+        "submit": {"type": "plain_text", "text": "削除する"},
+        "close": {"type": "plain_text", "text": "キャンセル"},
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*{date}* の勤怠連絡を削除してもよろしいですか？\nこの操作は取り消せません。"
+                }
+            }
+        ]
+    }

@@ -7,13 +7,16 @@ import logging
 from resources.views.modal_views import (
     create_attendance_modal_view, 
     create_history_modal_view,
-    create_member_settings_modal_view
+    create_member_settings_modal_view,
+    create_delete_confirm_modal
 )
 from resources.shared.db import (
     get_single_attendance_record, 
     delete_attendance_record_db,
     get_channel_members_with_section
 )
+
+from resources.constants import ATTENDANCE_CHANNEL_ID
 
 # ロガーの統一
 logger = logging.getLogger(__name__)
@@ -50,33 +53,43 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             logger.error(f"修正モーダル表示失敗: {e}")
 
     # ==========================================
-    # 2. 勤怠の「取消」ボタン押下
+    # 2. 勤怠の「取消」ボタン押下 (モーダル表示) 
     # ==========================================
     @app.action("delete_attendance_request")
-    def handle_attendance_delete(ack, body, client):
-        """DBから削除し、メッセージを『削除済み』に書き換える"""
+    def open_delete_confirm_modal(ack, body, client):
+        """確認用モーダルを開く"""
+        ack()
+        trigger_id = body["trigger_id"]
+        date = body["actions"][0]["value"] # ボタンのvalueに入っている日付
+
+        # モーダルを開く
+        client.views_open(
+            trigger_id=trigger_id,
+            view=create_delete_confirm_modal(date)
+        )
+
+    # ==========================================
+    # 3. 削除確認モーダルの「送信」
+    # ==========================================
+    @app.view("delete_attendance_confirm_callback")
+    def handle_delete_confirm_submit(ack, body, client, view, attendance_service):
+        """実際にDBから削除する"""
         ack()
         user_id = body["user"]["id"]
         workspace_id = body["team"]["id"]
-        date = body["actions"][0]["value"]
+        date = view["private_metadata"] # モーダル作成時に渡した日付
 
         try:
             # Firestoreから削除
-            delete_attendance_record_db(workspace_id, user_id, date)
+            attendance_service.delete_attendance(workspace_id, user_id, date)
             
-            # メッセージを更新（操作したボタンがあるメッセージを上書き）
-            client.chat_update(
-                channel=body["channel"]["id"],
-                ts=body["container"]["message_ts"],
-                blocks=[
-                    {
-                        "type": "context", 
-                        "elements": [{"type": "mrkdwn", "text": f"ⓘ <@{user_id}>さんの {date} の勤怠連絡を削除しました。"}]
-                    }
-                ],
-                text="勤怠連絡を削除しました"
+            # 完了を通知（DM、またはエフェメラルメッセージなど）
+            client.chat_postEphemeral(
+                channel=ATTENDANCE_CHANNEL_ID, # constants等から取得
+                user=user_id,
+                text=f"ⓘ {date} の勤怠連絡を削除しました。"
             )
-            logger.info(f"Attendance deleted: {user_id} on {date}")
+            logger.info(f"Attendance deleted via modal: {user_id} on {date}")
             
         except Exception as e:
             logger.error(f"取消処理失敗: {e}")
