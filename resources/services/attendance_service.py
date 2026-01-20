@@ -66,10 +66,15 @@ class AttendanceService:
             logger.error(f"データ取得失敗: {e}")
             return None
 
-    def delete_attendance(self, workspace_id: str, user_id: str, date: str) -> bool:
-        """勤怠記録を削除"""
+    def delete_attendance(self, workspace_id: str, user_id: str, date: str, silent: bool = False) -> bool:
+        """
+        勤怠記録を削除
+        silent=True の場合、対象が存在しなくても例外を投げずに正常終了を返す（AI解析用）
+        """
         existing = get_single_attendance_record(workspace_id, user_id, date)
         if not existing:
+            if silent:
+                return True
             raise ValidationError("削除対象が見つかりません", "⚠️ 削除対象の勤怠記録が見つかりません。")
 
         try:
@@ -81,12 +86,17 @@ class AttendanceService:
             return False
 
     def get_user_history(self, user_id: str, month_filter: Optional[str] = None, email: Optional[str] = None) -> List[Dict[str, Any]]:
-        """ユーザーの履歴を取得（名寄せ対応）"""
+        """
+        ユーザーの履歴を取得（名寄せ対応）
+        不具合①対策：filter文字列のトリミング処理を追加
+        """
         try:
+            # 空文字やNoneの揺れを吸収
+            clean_month = month_filter.strip() if month_filter else ""
             return get_user_history_from_db(
                 user_id=user_id,
                 email=email,
-                month_filter=month_filter or ""
+                month_filter=clean_month
             )
         except Exception as e:
             logger.error(f"履歴取得エラー: {e}")
@@ -97,28 +107,19 @@ class AttendanceService:
         return get_today_records(date_str)
 
     def get_daily_report_data(self, workspace_id: str, date_str: str, channel_id: str) -> Dict[str, List[Dict[str, Any]]]:
-        """
-        指定日の全課の勤怠データを一括取得（Firestore対応版）。
-        SQLのJOINの代わりに、プログラム側でデータを紐付けます。
-        """
+        """指定日の全課の勤怠データを一括取得（Firestore対応版）"""
         report_data = {}
         
         try:
-            # 1. メンバー構成（課の設定）を取得
             section_user_map, _ = get_channel_members_with_section()
-            
-            # 2. その日の全打刻データを取得
             all_today_records = self.get_daily_report(date_str)
-            # user_id をキーにして検索しやすくする
             attendance_lookup = {r['user_id']: r for r in all_today_records}
 
-            # 3. 課のリストを回してデータを組み立てる
             for section, user_ids in section_user_map.items():
                 if section not in report_data:
                     report_data[section] = []
                 
                 for u_id in user_ids:
-                    # 今日、このユーザーの打刻データがあるか確認
                     if u_id in attendance_lookup:
                         record = attendance_lookup[u_id]
                         report_data[section].append({
@@ -126,9 +127,7 @@ class AttendanceService:
                             "status": record.get('status'),
                             "note": record.get('note') or ""
                         })
-            
             return report_data
-
         except Exception as e:
             logger.error(f"レポートデータ一括取得失敗: {e}")
             return {}
@@ -155,36 +154,38 @@ class AttendanceService:
         AIの抽出結果（複数日対応）をループで回し、保存または削除を自動実行する
         """
         processed_records = []
-        
-        # メインの打刻と追加の打刻を一つのリストにまとめる
         all_items = []
         if extracted_data:
-            # 1件目
             all_items.append(extracted_data)
-            # 2件目以降（あれば）
             if "_additional_attendances" in extracted_data:
                 all_items.extend(extracted_data["_additional_attendances"])
 
         for item in all_items:
-            date = item.get("date")
-            action = item.get("action", "save") # デフォルトは保存
+            try:
+                date = item.get("date")
+                action = item.get("action", "save") # デフォルトは保存
 
-            if action == "delete":
-                # AIが「打ち消し線あり」と判断した日付を削除
-                logger.info(f"AIによる自動削除を実行: User={user_id}, Date={date}")
-                self.delete_attendance(workspace_id, user_id, date)
-            else:
-                # 通常の保存
-                record = self.save_attendance(
-                    workspace_id=workspace_id,
-                    user_id=user_id,
-                    email=email,
-                    date=date,
-                    status=item.get("status", "other"),
-                    note=item.get("note", ""),
-                    channel_id=channel_id,
-                    ts=ts
-                )
-                processed_records.append(record)
+                if action == "delete":
+                    # AIが「打ち消し線等による完全削除」と判断した日付を削除
+                    # 既にデータがない場合も考慮し silent=True に設定
+                    logger.info(f"AIによる自動削除を実行: User={user_id}, Date={date}")
+                    self.delete_attendance(workspace_id, user_id, date, silent=True)
+                else:
+                    # 通常の保存（不具合②対策：打ち消し線があってもaction=saveならこちらに来る）
+                    record = self.save_attendance(
+                        workspace_id=workspace_id,
+                        user_id=user_id,
+                        email=email,
+                        date=date,
+                        status=item.get("status", "other"),
+                        note=item.get("note", ""),
+                        channel_id=channel_id,
+                        ts=ts
+                    )
+                    processed_records.append(record)
+            except Exception as e:
+                # 複数日の場合、1件のエラーで全停止させない
+                logger.error(f"AI抽出結果の個別処理中にエラーが発生 ({item.get('date')}): {e}")
+                continue
         
         return processed_records

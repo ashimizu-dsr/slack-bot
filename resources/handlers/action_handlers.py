@@ -225,3 +225,45 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             
         except Exception as e:
             logger.error(f"履歴表示失敗: {e}")
+
+    # ==========================================
+    # 3. 【重要】履歴モーダルの年月変更イベント (不具合①対策)
+    # ==========================================
+    @app.action("history_year_change")
+    @app.action("history_month_change")
+    def handle_history_filter_update(ack, body, client):
+        """履歴モーダルの年月が変更された時に表示を更新する"""
+        ack()
+        
+        try:
+            # 修正後のモーダル定義でセットした user_id を取得
+            metadata = json.loads(body["view"]["private_metadata"])
+            target_user_id = metadata.get("target_user_id")
+            
+            # 現在の選択値を取得
+            state_values = body["view"]["state"]["values"]
+            selected_year = state_values["history_filter"]["history_year_change"]["selected_option"]["value"]
+            selected_month = state_values["history_filter"]["history_month_change"]["selected_option"]["value"]
+            
+            month_filter = f"{selected_year}-{selected_month}"
+            
+            # 選択された年月の履歴を再取得
+            history = attendance_service.get_user_history(user_id=target_user_id, month_filter=month_filter)
+            
+            # 表示を更新（views_open ではなく views_update を使用）
+            updated_view = create_history_modal_view(
+                history_records=history,
+                selected_year=selected_year,
+                selected_month=selected_month,
+                user_id=target_user_id
+            )
+            
+            client.views_update(
+                view_id=body["view"]["id"],
+                hash=body["view"]["hash"],
+                view=updated_view
+            )
+            logger.info(f"履歴モーダル更新成功: {target_user_id} for {month_filter}")
+
+        except Exception as e:
+            logger.error(f"履歴フィルタ更新失敗: {e}")

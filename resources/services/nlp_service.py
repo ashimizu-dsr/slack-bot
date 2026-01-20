@@ -57,45 +57,44 @@ def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
     """
     メッセージから勤怠情報を抽出する。
     修正ポイント：
-    1. コードブロック（半角/全角）を完全に物理削除し、誤認を防止。
-    2. 打ち消し線を AI が認識しやすい【DELETE】マーカーに置換。
-    3. AI に action: delete を出力させるようプロンプトを強化。
+    1. コードブロックを消さずにタグ付けし、文脈としてAIに渡す（不具合③対策）。
+    2. 打ち消し線を「部分削除」としてマークし、残りの情報の更新を可能にする（不具合②対策）。
+    3. プロンプトのルールを強化し、actionの判定精度を向上。
     """
     api_key = os.getenv("OPENAI_API_KEY")
     if not text or not api_key or not OpenAI:
         return None
 
-    # --- 修正点1: 前処理（コードブロックとノイズの除去） ---
+    # --- 修正点1: 前処理（タグ付けによる文脈維持） ---
     
-    # A. 複数行コードブロック (```...```) を削除 (半角・全角の両方に対応)
-    # re.DOTALL を指定することで改行を含むブロックも一括削除します
-    clean_text = re.sub(r'```[\s\S]*?```', '', text)
-    clean_text = re.sub(r'｀｀｀[\s\S]*?｀｀｀', '', clean_text)
+    # A. コードブロック (```...```) は消さずに特別なタグで囲む
+    # これにより「コードブロック内しか書かない人」の情報も拾えるようになります
+    clean_text = text.replace("```", "\n[STR_CODE_BLOCK_CONTENT]\n").replace("｀｀｀", "\n[STR_CODE_BLOCK_CONTENT]\n")
     
-    # B. インラインコード (`...`) を削除
-    clean_text = re.sub(r'`.*?`', '', clean_text)
-    clean_text = re.sub(r'｀.*?｀', '', clean_text)
+    # B. インラインコード (`...`) も同様
+    clean_text = clean_text.replace("`", "[INLINE_CODE]").replace("｀", "[INLINE_CODE]")
     
-    # C. 打ち消し線 (~...~) を明示的な削除指示テキストに置換
-    # AIが記号を見落とさないよう、テキストとして強調します
-    clean_text = re.sub(r'~(.*?)~', r'\n【DELETE/CANCEL】: \1\n', clean_text)
-
-    # デバッグ用：AIに渡る前のテキストを確認したい場合は有効にしてください
-    # logger.info(f"Cleaned text for AI: {clean_text}")
+    # C. 打ち消し線 (~...~) を「無効化されたデータ」としてマーク
+    # 「物理削除」しないことで、同じ行にある別の有効な情報をAIが認識できます
+    clean_text = re.sub(r'~(.*?)~', r'\n(INSTRUCTION_IGNORE_THIS_PART: \1)\n', clean_text)
 
     client = OpenAI(api_key=api_key)
     base_date = datetime.date.today() 
     
     try:
-        # --- 修正点2: システムプロンプトの更新 ---
-        # 削除指示（DELETE/CANCEL）がある場合は action: delete を出すよう厳格に指定
+        # --- 修正点2: プロンプトのルール厳格化 ---
         system_instruction = (
-            "You are a professional attendance data extractor. "
-            "Extract info to JSON: {is_attendance: bool, attendances: [{date, status, start_time, end_time, note, action}]}. "
-            "\nRules:\n"
-            "1. If a line or information is marked with '【DELETE/CANCEL】', you MUST set action to 'delete'.\n"
-            "2. Otherwise, set action to 'save'.\n"
-            "3. If the text is empty after preprocessing or contains no attendance, set is_attendance to false."
+            "You are a professional attendance data extractor. Output JSON: "
+            "{is_attendance: bool, attendances: [{date, status, start_time, end_time, note, action}]}\n\n"
+            "Rules:\n"
+            "1. Information inside (INSTRUCTION_IGNORE_THIS_PART: ...) must be treated as canceled/deleted. "
+            "If ONLY a part of the line is ignored, set action to 'save' and extract the remaining valid info.\n"
+            "2. If an ENTIRE date or an entire line is ignored, set action to 'delete'.\n"
+            "3. Text inside [STR_CODE_BLOCK_CONTENT] or [INLINE_CODE] is usually an example. "
+            "Ignore it IF there is clear attendance info outside the blocks. "
+            "However, if the ONLY information provided is inside these blocks, treat it as the user's input.\n"
+            "4. Priority: Remaining plain text > Code block content > Ignored part.\n"
+            "5. If multiple items exist for the same date, merge them into one record with action 'save' unless everything is canceled."
         )
 
         response = client.chat.completions.create(
@@ -105,7 +104,7 @@ def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
                 {"role": "user", "content": f"Today: {base_date}\nText: {clean_text}"}
             ],
             response_format={"type": "json_object"},
-            temperature=0.2
+            temperature=0.1 # 判定のブレを抑えるため低めに設定
         )
 
         data = json.loads(response.choices[0].message.content)
@@ -116,7 +115,6 @@ def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
         
         # 整形処理用のヘルパー
         def format_result(att):
-            # AIが返してきた action をそのまま利用（デフォルトは save）
             return {
                 "date": att.get("date") or base_date.isoformat(),
                 "status": _normalize_status(att.get("status", "other")),
