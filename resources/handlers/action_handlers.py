@@ -129,8 +129,9 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
     # ==========================================
     # 3. 削除確認モーダルの「送信」
     # ==========================================
+    # 引数から attendance_service を削除します（外側の変数を使うため）
     @app.view("delete_attendance_confirm_callback")
-    def handle_delete_confirm_submit(ack, body, client, view, attendance_service):
+    def handle_delete_confirm_submit(ack, body, client, view):
         """実際にDBから削除し、メッセージを消す"""
         ack()
         user_id = body["user"]["id"]
@@ -143,25 +144,26 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
         channel_id = metadata.get("channel_id")
 
         try:
-            # 1. Firestoreから削除
+            # 引数経由ではなく、register_action_handlers が受け取っている
+            # 外側の attendance_service インスタンスを直接使用します
             attendance_service.delete_attendance(workspace_id, user_id, date)
             
-            # 2. メッセージ自体を削除（または削除済みメッセージに更新）
-            # 消さないでほしい場合は update で「削除されました」にする
+            # 完了時に元のメッセージを「削除済み」の表示に更新
             client.chat_update(
                 channel=channel_id,
                 ts=target_ts,
                 blocks=[{
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": f"~{date} の勤怠連絡を削除しました~"}
+                    "type": "context",
+                    "elements": [
+                        {"type": "mrkdwn", "text": f"~{date} の勤怠連絡を取り消しました~"}
+                    ]
                 }],
-                text="勤怠を削除しました"
+                text="勤怠を取り消しました"
             )
-            
             logger.info(f"Attendance deleted and message updated: {user_id} on {date}")
             
         except Exception as e:
-            logger.error(f"取消処理失敗: {e}")
+            logger.error(f"取消処理失敗: {e}", exc_info=True)
 
     # ==========================================
     # 3. メンバー設定ボタン or ショートカット

@@ -342,7 +342,6 @@ def create_attendance_card_blocks(record: Any, message_text: str = "", options: 
                 {
                     "type": "button",
                     "text": {"type": "plain_text", "text": "取消"},
-                    "style": "danger",
                     "action_id": "delete_attendance_request",
                     "value": str(date_val) # 日付を渡す
                 }
