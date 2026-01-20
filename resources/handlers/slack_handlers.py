@@ -1,122 +1,115 @@
 """
-Slack Event Handlers - チャンネル内の発言監視とAI解析の実行
-Cloud Run 最適化版（Lazy非使用・直列処理モデル）
+Slack Event Handlers - 修正版
 """
 import logging
 from typing import Optional
-from constants import ENABLE_CHANNEL_NLP, ATTENDANCE_CHANNEL_ID
+# nlp_service から新しく extract_attendance_from_text を読み込む
 from resources.services.nlp_service import extract_attendance_from_text 
 from resources.views.modal_views import create_setup_message_blocks
 from resources.shared.utils import get_user_email
 
-# loggerの統一
 logger = logging.getLogger(__name__)
 
-# メッセージ重複防止用
 _processed_message_ts = set()
 
 def _is_likely_attendance_message(text: str) -> bool:
     if not text: return False
+    # 【不具合①対策】判定を緩和。
+    # 「1/21(水) ~8:00出勤~」のようなメッセージは
+    # 挨拶リストに含まれないため、以下のロジックで通過するようにします。
     text_stripped = text.strip()
     boring_messages = [
         "承知しました", "了解です", "ありがとうございます", 
         "お疲れ様です", "おはようございます", "よろしくお願いします"
     ]
+    # 挨拶そのものと完全一致する場合のみ除外
     return text_stripped not in boring_messages
 
 def should_process_message(event) -> bool:
-    """メッセージを処理すべきかどうかの判定ロジック"""
     user_id = event.get("user")
     text = (event.get("text") or "").strip()
     channel = event.get("channel")
 
-    # サブタイプがある場合やBot自身の投稿、空文字は無視
     if event.get("subtype") or event.get("bot_id") or not user_id or not text:
         return False
     
-    # NLP設定が無効、または指定チャンネル以外なら無視
+    # NLPが無効、または指定チャンネル以外なら無視
+    from constants import ENABLE_CHANNEL_NLP, ATTENDANCE_CHANNEL_ID
     if not ENABLE_CHANNEL_NLP: return False
     if ATTENDANCE_CHANNEL_ID and channel != ATTENDANCE_CHANNEL_ID: return False
     
-    # すでにボットが反応した後のメッセージや、挨拶のみのメッセージは無視
+    # 自分が送った「記録済み」メッセージに反応しないようにする
     if text.startswith(("勤怠連絡:", "✅", "ⓘ")): return False
     if not _is_likely_attendance_message(text): return False
     
     return True
 
 def process_attendance_core(event, client, attendance_service, notification_service):
-    """
-    AI解析を実行し、結果に基づいて保存または削除を実行する。
-    削除時はスレッドに誰でも見える形で通知する。
-    """
     user_id = event.get("user")
     workspace_id = event.get("team")
     ts = event.get("ts")
     channel = event.get("channel")
     text = (event.get("text") or "").strip()
 
-    # 二重処理防止
     msg_key = f"{channel}:{ts}"
-    if msg_key in _processed_message_ts:
-        return
+    if msg_key in _processed_message_ts: return
     _processed_message_ts.add(msg_key)
 
     try:
         email: Optional[str] = get_user_email(client, user_id, logger)
         
-        # AI解析の実行
+        # 1. AI解析実行 (nlp_serviceの修正版が反映されている前提)
         extraction = extract_attendance_from_text(text)
         
         if not extraction:
+            logger.info(f"AI: No attendance data extracted from: {text[:20]}...")
             return
 
-        # 受付中リアクション（処理が始まった目印）
+        # 処理開始のリアクション
         try:
             client.reactions_add(channel=channel, name="outbox_tray", timestamp=ts)
         except Exception: pass
 
-        # 抽出データのリスト化
+        # 2. リスト化（複数日対応）
         attendances = [extraction]
         if "_additional_attendances" in extraction:
             attendances.extend(extraction["_additional_attendances"])
 
+        # 3. ループ処理
         for att in attendances:
             date = att.get("date")
             action = att.get("action", "save")
 
+            # A. 削除アクション (打ち消し線のみの場合など)
             if action == "delete":
                 try:
-                    # DBから削除実行
                     attendance_service.delete_attendance(workspace_id, user_id, date)
-                    
-                    # --- 【修正点】全員に見える形でスレッドに通知 ---
-                    client.chat_postMessage(
+                    # 通知
+                    notification_service.notify_attendance_change(
+                        record={"user_id": user_id, "date": date},
                         channel=channel,
                         thread_ts=ts,
-                        text=f"~{date} の勤怠連絡を取り消しました~"
+                        is_delete=True
                     )
-                    logger.info(f"Auto-deleted by AI strikethrough: {user_id} on {date}")
-                except Exception as e:
-                    logger.info(f"Delete skipped (not found or error): {date}")
+                except Exception:
+                    logger.info(f"Delete failed/skipped: {date}")
                 continue
 
-            # --- 通常の保存処理 ---
+            # B. 保存・更新アクション
+            # record は保存された結果のオブジェクト（または辞書）
             record = attendance_service.save_attendance(
                 workspace_id=workspace_id, user_id=user_id, email=email,
                 date=date, status=att.get("status"), note=att.get("note", ""), 
                 channel_id=channel, ts=ts
             )
             
-            actions = [
-                {"type": "button", "text": {"type": "plain_text", "text": "修正"}, "action_id": "open_update_attendance", "value": date},
-                {"type": "button", "text": {"type": "plain_text", "text": "取消"}, "action_id": "delete_attendance_request", "value": date}
-            ]
-
+            # 【重要】通知サービスの呼び出し
+            # 引数を NotificationService の notify_attendance_change の定義に合わせます
             notification_service.notify_attendance_change(
                 record=record, 
-                options=actions, 
                 channel=channel, 
-                thread_ts=ts
+                thread_ts=ts,
+                is_update=False # 保存したてなのでFalse
             )
             
     except Exception as e:

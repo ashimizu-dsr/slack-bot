@@ -1,3 +1,6 @@
+"""
+NLP Service - AIによる勤怠情報の抽出
+"""
 import datetime
 import json
 import os
@@ -5,7 +8,6 @@ import re
 from typing import Optional, Dict, Any, List
 from resources.shared.setup_logger import setup_logger
 
-# OpenAIのインポート（エラーハンドリング付き）
 try:
     from openai import OpenAI
 except ImportError:
@@ -13,9 +15,6 @@ except ImportError:
 
 logger = setup_logger(__name__)
 
-# ==========================================
-# 1. 定数・設定
-# ==========================================
 STATUS_ALIASES = {
     "late": {"late", "遅刻", "遅れ", "遅延"},
     "early_leave": {"early_leave", "早退"},
@@ -25,111 +24,97 @@ STATUS_ALIASES = {
     "other": {"other", "未分類", "その他"},
 }
 
-# ==========================================
-# 2. 内部補助関数
-# ==========================================
-
 def _normalize_status(value: str) -> str:
-    val = value.lower()
+    val = str(value).lower()
     for canonical, aliases in STATUS_ALIASES.items():
         if val in aliases or any(a in val for a in aliases):
             return canonical
     return "other"
 
 def _format_note(att_data: Dict) -> str:
-    """AIが抽出した各フィールドを結合して備考欄を作成"""
     parts = []
+    # AIが抽出した「具体的な時間」があれば備考に含める
     if att_data.get("start_time"): parts.append(f"{att_data['start_time']}出勤")
     if att_data.get("end_time"):   parts.append(f"{att_data['end_time']}退勤")
-    if att_data.get("break_minutes"): parts.append(f"休憩{att_data['break_minutes']}分")
     
     ai_note = att_data.get("note")
-    if ai_note and str(ai_note).lower() != "none":
+    # "None" や Noneオブジェクトを除外して結合
+    if ai_note and str(ai_note).lower() not in ["none", "null"]:
         parts.append(str(ai_note))
         
     return " / ".join(parts) if parts else "勤怠連絡"
 
-# ==========================================
-# 3. メインサービス関数
-# ==========================================
-
 def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
-    """
-    メッセージから勤怠情報を抽出する。
-    修正ポイント：
-    1. コードブロックを消さずにタグ付けし、文脈としてAIに渡す（不具合③対策）。
-    2. 打ち消し線を「部分削除」としてマークし、残りの情報の更新を可能にする（不具合②対策）。
-    3. プロンプトのルールを強化し、actionの判定精度を向上。
-    """
     api_key = os.getenv("OPENAI_API_KEY")
     if not text or not api_key or not OpenAI:
         return None
 
-    # --- 修正点1: 前処理（タグ付けによる文脈維持） ---
+    # --- 修正点1: 破壊的な前処理をやめる (不具合②対策) ---
+    # 元のコードではコードブロックをタグに置換していましたが、
+    # AIは生のコードブロック形式の方が「データである」と認識しやすいです。
+    clean_text = text
     
-    # A. コードブロック (```...```) は消さずに特別なタグで囲む
-    # これにより「コードブロック内しか書かない人」の情報も拾えるようになります
-    clean_text = text.replace("```", "\n[STR_CODE_BLOCK_CONTENT]\n").replace("｀｀｀", "\n[STR_CODE_BLOCK_CONTENT]\n")
-    
-    # B. インラインコード (`...`) も同様
-    clean_text = clean_text.replace("`", "[INLINE_CODE]").replace("｀", "[INLINE_CODE]")
-    
-    # C. 打ち消し線 (~...~) を「無効化されたデータ」としてマーク
-    # 「物理削除」しないことで、同じ行にある別の有効な情報をAIが認識できます
-    clean_text = re.sub(r'~(.*?)~', r'\n(INSTRUCTION_IGNORE_THIS_PART: \1)\n', clean_text)
+    # 打ち消し線のみ、AIが「削除対象」と誤解しないようヒントを与える程度に留める
+    clean_text = re.sub(r'~(.*?)~', r'(strike-through: \1)', clean_text)
 
     client = OpenAI(api_key=api_key)
     base_date = datetime.date.today() 
     
     try:
-        # --- 修正点2: プロンプトのルール厳格化 ---
+        # --- 修正点2: プロンプトの簡略化と指示の明確化 (不具合①・②対策) ---
         system_instruction = (
-            "You are a professional attendance data extractor. Output JSON: "
-            "{is_attendance: bool, attendances: [{date, status, start_time, end_time, note, action}]}\n\n"
+            "You are a professional attendance data extractor.\n"
+            "Analyze the user's message and extract attendance records into JSON.\n"
+            "Format: { \"is_attendance\": bool, \"attendances\": [{ \"date\": \"YYYY-MM-DD\", \"status\": \"string\", \"start_time\": \"HH:mm\", \"end_time\": \"HH:mm\", \"note\": \"string\", \"action\": \"save\" | \"delete\" }] }\n\n"
             "Rules:\n"
-            "1. Information inside (INSTRUCTION_IGNORE_THIS_PART: ...) must be treated as canceled/deleted. "
-            "If ONLY a part of the line is ignored, set action to 'save' and extract the remaining valid info.\n"
-            "2. If an ENTIRE date or an entire line is ignored, set action to 'delete'.\n"
-            "3. Text inside [STR_CODE_BLOCK_CONTENT] or [INLINE_CODE] is usually an example. "
-            "Ignore it IF there is clear attendance info outside the blocks. "
-            "However, if the ONLY information provided is inside these blocks, treat it as the user's input.\n"
-            "4. Priority: Remaining plain text > Code block content > Ignored part.\n"
-            "5. If multiple items exist for the same date, merge them into one record with action 'save' unless everything is canceled."
+            "1. Even if the text is in code blocks (```), extract it as official data.\n"
+            "2. If a part is marked as (strike-through: ...), ignore that specific part but extract other valid info from the same date as 'save'.\n"
+            "3. If the user wants to cancel a whole day, set action to 'delete'. Otherwise, always use 'save'.\n"
+            "4. Use the provided Today's date to infer relative dates like '1/30' or 'Monday'."
         )
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_instruction},
-                {"role": "user", "content": f"Today: {base_date}\nText: {clean_text}"}
+                {"role": "user", "content": f"Today: {base_date} ({base_date.strftime('%A')})\nText: {clean_text}"}
             ],
             response_format={"type": "json_object"},
-            temperature=0.1 # 判定のブレを抑えるため低めに設定
+            temperature=0.1
         )
 
         data = json.loads(response.choices[0].message.content)
-        if not data.get("is_attendance") or not data.get("attendances"):
+        # 修正ポイント: is_attendanceがFalseでも、attendancesがあれば拾う（AIの判定漏れ対策）
+        if not data.get("attendances"):
             return None
 
         attendances = data["attendances"]
         
-        # 整形処理用のヘルパー
         def format_result(att):
+            # AIが返してきた日付をそのまま使い、なければ今日を補完
+            target_date = att.get("date")
+            if not target_date or len(target_date) < 10:
+                target_date = base_date.isoformat()
+                
             return {
-                "date": att.get("date") or base_date.isoformat(),
+                "date": target_date,
                 "status": _normalize_status(att.get("status", "other")),
                 "note": _format_note(att),
                 "action": att.get("action", "save")
             }
 
-        # 1件目の処理
-        result = format_result(attendances[0])
+        # 抽出された全データを整形
+        results = [format_result(a) for a in attendances]
+        
+        if not results:
+            return None
 
-        # 2件目以降（複数日対応）
-        if len(attendances) > 1:
-            result["_additional_attendances"] = [format_result(a) for a in attendances[1:]]
+        # 返却形式の維持（1件目をベースにし、2件目以降を _additional_attendances に入れる）
+        final_result = results[0]
+        if len(results) > 1:
+            final_result["_additional_attendances"] = results[1:]
 
-        return result
+        return final_result
 
     except Exception as e:
         logger.error(f"AI Extraction Error: {e}")

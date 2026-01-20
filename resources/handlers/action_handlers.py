@@ -36,11 +36,9 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
         message_ts = body["container"]["message_ts"]
 
         try:
-            # Firestoreから既存レコードを取得
             record = get_single_attendance_record(workspace_id, user_id, date)
             
-            # --- 本人チェックの修正 ---
-            # レコードが存在し、かつ所有者が自分ではない場合のみエラーを出す
+            # 本人チェック：データがあり、かつ自分のものではない場合のみ拒絶
             if record and record.get("user_id") != user_id:
                 client.chat_postEphemeral(
                     channel=channel_id,
@@ -49,7 +47,6 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                 )
                 return
 
-            # 上書きに必要な情報を metadata に詰め込む
             private_metadata = json.dumps({
                 "date": date,
                 "channel_id": channel_id,
@@ -63,7 +60,6 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                 "note": record.get("note", "") if record else ""
             }
 
-            # モーダル表示
             view = create_attendance_modal_view(initial_data=initial_data, is_fixed_date=True)
             view["private_metadata"] = private_metadata 
             
@@ -77,7 +73,6 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
     # ==========================================
     @app.action("delete_attendance_request")
     def open_delete_confirm_modal_handler(ack, body, client):
-        """確認用モーダルを開く（本人チェック付き）"""
         ack()
         user_id = body["user"]["id"]
         workspace_id = body["team"]["id"]
@@ -87,24 +82,16 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
 
         try:
             record = get_single_attendance_record(workspace_id, user_id, date)
-            
             if record and record.get("user_id") != user_id:
-                client.chat_postEphemeral(
-                    channel=channel_id,
-                    user=user_id,
-                    text="⚠️ この操作は打刻した本人しか行えません。"
-                )
+                client.chat_postEphemeral(channel=channel_id, user=user_id, text="⚠️ 本人のみ取消可能です。")
                 return
 
-            metadata_dict = {
+            view = create_delete_confirm_modal(date) 
+            view["private_metadata"] = json.dumps({
                 "date": date,
                 "message_ts": body["container"]["message_ts"],
                 "channel_id": channel_id
-            }
-
-            view = create_delete_confirm_modal(date) 
-            view["private_metadata"] = json.dumps(metadata_dict)
-
+            })
             client.views_open(trigger_id=trigger_id, view=view)
         except Exception as e:
             logger.error(f"取消モーダル表示失敗: {e}")
@@ -117,70 +104,33 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
         ack()
         user_id = body["user"]["id"]
         workspace_id = body["team"]["id"]
-        
         metadata = json.loads(view.get("private_metadata", "{}"))
-        date = metadata.get("date")
-        target_ts = metadata.get("message_ts")
-        channel_id = metadata.get("channel_id")
 
         try:
-            attendance_service.delete_attendance(workspace_id, user_id, date)
-            
+            attendance_service.delete_attendance(workspace_id, user_id, metadata["date"])
             client.chat_update(
-                channel=channel_id,
-                ts=target_ts,
-                blocks=[{
-                    "type": "context",
-                    "elements": [
-                        {"type": "mrkdwn", "text": f"ⓘ <@{user_id}>さんの {date} の勤怠連絡を取り消しました"}
-                    ]
-                }],
+                channel=metadata["channel_id"],
+                ts=metadata["message_ts"],
+                blocks=[{"type": "context", "elements": [{"type": "mrkdwn", "text": f"ⓘ <@{user_id}>さんの {metadata['date']} の勤怠連絡を取り消しました"}]}],
                 text="勤怠を取り消しました"
             )
         except Exception as e:
             logger.error(f"取消処理失敗: {e}", exc_info=True)
 
     # ==========================================
-    # 4. メンバー設定
-    # ==========================================
-    @app.action("open_member_settings")
-    @app.shortcut("open_member_setup_modal")
-    def handle_member_setup(ack, body, client):
-        ack()
-        trigger_id = body["trigger_id"]
-        try:
-            initial_members, version = get_channel_members_with_section()
-            channel_id = body.get("channel", {}).get("id") or \
-                         (json.loads(body.get("view", {}).get("private_metadata", "{}")).get("channel_id"))
-            
-            if not channel_id:
-                from constants import ATTENDANCE_CHANNEL_ID
-                channel_id = ATTENDANCE_CHANNEL_ID
-
-            view = create_member_settings_modal_view(
-                channel_id=channel_id, 
-                initial_members_by_section=initial_members,
-                version=version
-            )
-            client.views_open(trigger_id=trigger_id, view=view)
-        except Exception as e:
-            logger.error(f"メンバー設定表示失敗: {e}", exc_info=True)
-
-    # ==========================================
-    # 5. 勤怠履歴（不具合①対策：workspace_idの追加）
+    # 4. 勤怠履歴表示（不具合③：workspace_id不足の解消）
     # ==========================================
     @app.shortcut("open_kintai_history")
     def handle_history_shortcut(ack, body, client):
-        """個人の勤怠履歴をモーダルで表示する"""
         ack()
         user_id = body["user"]["id"]
-        workspace_id = body["team"]["id"] # 追加
+        workspace_id = body["team"]["id"] 
         
         try:
             today = datetime.date.today()
             month_str = today.strftime("%Y-%m")
             
-            # 修正ポイント：workspace_id を引数に追加
+            # 引数に workspace_id を追加
             history = attendance_service.get_user_history(
                 workspace_id=workspace_id, 
                 user_id=user_id, 
@@ -191,20 +141,20 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                 history_records=history,
                 selected_year=str(today.year),
                 selected_month=f"{today.month:02d}",
-                user_id=user_id # 追加した引数
+                user_id=user_id
             )
             client.views_open(trigger_id=body["trigger_id"], view=view)
         except Exception as e:
             logger.error(f"履歴表示失敗: {e}", exc_info=True)
 
     # ==========================================
-    # 6. 履歴モーダルの年月変更（不具合①対策）
+    # 5. 履歴モーダルの年月変更（不具合③対応）
     # ==========================================
     @app.action("history_year_change")
     @app.action("history_month_change")
     def handle_history_filter_update(ack, body, client):
         ack()
-        workspace_id = body["team"]["id"] # 追加
+        workspace_id = body["team"]["id"]
         try:
             metadata = json.loads(body["view"]["private_metadata"])
             target_user_id = metadata.get("target_user_id")
@@ -215,7 +165,6 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             
             month_filter = f"{selected_year}-{selected_month}"
             
-            # 修正ポイント：workspace_id を引数に追加
             history = attendance_service.get_user_history(
                 workspace_id=workspace_id, 
                 user_id=target_user_id, 
@@ -229,10 +178,6 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                 user_id=target_user_id
             )
             
-            client.views_update(
-                view_id=body["view"]["id"],
-                hash=body["view"]["hash"],
-                view=updated_view
-            )
+            client.views_update(view_id=body["view"]["id"], hash=body["view"]["hash"], view=updated_view)
         except Exception as e:
             logger.error(f"履歴フィルタ更新失敗: {e}", exc_info=True)

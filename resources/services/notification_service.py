@@ -23,48 +23,50 @@ class NotificationService:
         self.client = slack_client
         self.attendance_service = attendance_service
 
-    def notify_attendance_change(self, record: Any, message_text: str = "",
-                                 options: Any = None, channel: Optional[str] = None,
+    def notify_attendance_change(self, record: Any, 
+                                 channel: str,
                                  thread_ts: Optional[str] = None,
                                  is_update: bool = False,
-                                 message_ts: Optional[str] = None) -> None:
+                                 is_delete: bool = False) -> None:
         """
-        打刻内容とボタンをスレッド内に投稿・更新する。
+        勤怠カード（記録/更新）または削除メッセージを送信する
         """
         from resources.views.modal_views import create_attendance_card_blocks
         
-        # ポイント：上書き時(is_update=True)でも show_buttons=True になるようにする
-        # ※ もし関数の引数に show_buttons があればそれを True で渡す
-        blocks = create_attendance_card_blocks(
-            record, 
-            message_text, 
-            options, 
-            is_update=is_update,
-            show_buttons=True  # ここを強制的に True にする
-        )
-        
         try:
-            target_channel = channel or (record.get('channel_id') if isinstance(record, dict) else getattr(record, 'channel_id', None))
-
-            # A. 上書き (既存のボタン付きメッセージを更新)
-            if message_ts:
-                self.client.chat_update(
-                    channel=target_channel,
-                    ts=message_ts,
-                    blocks=blocks, # ボタンが含まれた新しいブロックで上書き
-                    text="勤怠記録を更新しました"
+            # 1. 削除のみの場合（打ち消し線のみで、後の情報がない場合など）
+            if is_delete:
+                user_id = record.user_id if hasattr(record, 'user_id') else record.get('user_id')
+                date_val = record.date if hasattr(record, 'date') else record.get('date')
+                self.client.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    text=f"勤怠連絡を取り消しました: {date_val}",
+                    blocks=[{
+                        "type": "context",
+                        "elements": [{"type": "mrkdwn", "text": f"ⓘ <@{user_id}> さんの {date_val} の勤怠連絡を取り消しました"}]
+                    }]
                 )
                 return
 
-            # B. 新規投稿 (スレッド内への返信)
+            # 2. 記録・更新の場合（打ち消し線があっても最終的な情報がある場合）
+            # create_attendance_card_blocks を呼び出してボタン付きカードを作成
+            blocks = create_attendance_card_blocks(
+                record, 
+                is_update=is_update,
+                show_buttons=True
+            )
+            
+            msg_text = "勤怠記録を更新しました" if is_update else "勤怠を記録しました"
+            
             self.client.chat_postMessage(
-                channel=target_channel,
+                channel=channel,
                 thread_ts=thread_ts,
-                blocks=blocks, # ここにもボタンが含まれる
-                text="勤怠を記録しました"
+                blocks=blocks,
+                text=msg_text
             )
         except Exception as e:
-            logger.error(f"通知送信失敗: {e}")
+            logger.error(f"通知送信失敗: {e}", exc_info=True)
 
     def _get_bot_joined_channels(self) -> List[str]:
         """
