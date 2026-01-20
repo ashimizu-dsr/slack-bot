@@ -21,38 +21,44 @@ def register_modal_handlers(app, attendance_service, notification_service) -> No
         
         user_id = body["user"]["id"]
         workspace_id = body["team"]["id"]
+        
+        # モーダル生成時に仕込んだメタデータを取得
         metadata = json.loads(view.get("private_metadata", "{}"))
         vals = view["state"]["values"]
         
         date = metadata.get("date")
+        # どのメッセージを上書きするか（message_ts）をメタデータから取得
+        # ※モーダルを開く処理(register_action等)でここに入れておく必要があります
+        target_message_ts = metadata.get("message_ts") 
+
         status = vals["status_block"]["status_select"]["selected_option"]["value"]
         note = vals["note_block"]["note_input"]["value"] or ""
 
         try:
-            # 1. 既存レコードを取得（Emailやスレッド情報を引き継ぐため）
+            # 1. 既存レコードを取得
             existing = attendance_service.get_specific_date_record(workspace_id, user_id, date) or {}
             
             # 2. 保存実行
-            # クラウド版 AttendanceService.save_attendance は email 引数が必須（またはOptional）です
             record = attendance_service.save_attendance(
                 workspace_id=workspace_id,
                 user_id=user_id,
-                email=existing.get("email"), # 既存レコードからEmailを継承
+                email=existing.get("email"),
                 date=date,
                 status=status,
                 note=note,
-                channel_id=existing.get("channel_id"),
-                ts=existing.get("ts")
+                channel_id=existing.get("channel_id") or metadata.get("channel_id"),
+                ts=existing.get("ts") # 親スレッドのTS
             )
             
-            # 3. 通知
+            # 3. 通知（上書き実行）
             notification_service.notify_attendance_change(
                 record=record,
                 is_update=True,
-                channel=existing.get("channel_id"),
-                thread_ts=existing.get("ts")
+                channel=existing.get("channel_id") or metadata.get("channel_id"),
+                thread_ts=existing.get("ts"),       # スレッドを維持
+                message_ts=target_message_ts        # 【重要】これによって古いメッセージが上書きされる
             )
-            logger.info(f"Modal update success: {user_id} on {date}")
+            logger.info(f"Modal update success: {user_id} on {date}, target_ts: {target_message_ts}")
             
         except Exception as e:
             logger.error(f"勤怠保存失敗 (Modal): {e}", exc_info=True)
