@@ -155,7 +155,7 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                 blocks=[{
                     "type": "context",
                     "elements": [
-                        {"type": "mrkdwn", "text": f"~{date} の勤怠連絡を取り消しました~"}
+                        {"type": "mrkdwn", "text": f"ⓘ <@{user_id}>さんの {date} の勤怠連絡を取り消しました"}
                     ]
                 }],
                 text="勤怠を取り消しました"

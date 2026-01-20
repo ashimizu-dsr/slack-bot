@@ -46,7 +46,8 @@ def should_process_message(event) -> bool:
 
 def process_attendance_core(event, client, attendance_service, notification_service):
     """
-    AI解析を実行し、結果に基づいて保存または削除を実行する
+    AI解析を実行し、結果に基づいて保存または削除を実行する。
+    削除時はスレッドに誰でも見える形で通知する。
     """
     user_id = event.get("user")
     workspace_id = event.get("team")
@@ -63,13 +64,13 @@ def process_attendance_core(event, client, attendance_service, notification_serv
     try:
         email: Optional[str] = get_user_email(client, user_id, logger)
         
-        # AI解析の実行（修正後の extract_attendance_from_text を想定）
+        # AI解析の実行
         extraction = extract_attendance_from_text(text)
         
         if not extraction:
             return
 
-        # 受付中リアクション
+        # 受付中リアクション（処理が始まった目印）
         try:
             client.reactions_add(channel=channel, name="outbox_tray", timestamp=ts)
         except Exception: pass
@@ -81,23 +82,23 @@ def process_attendance_core(event, client, attendance_service, notification_serv
 
         for att in attendances:
             date = att.get("date")
-            action = att.get("action", "save") # AIが判定した action (save or delete)
+            action = att.get("action", "save")
 
             if action == "delete":
-                # --- 追加：自動削除ロジック ---
                 try:
+                    # DBから削除実行
                     attendance_service.delete_attendance(workspace_id, user_id, date)
-                    # 削除した旨をスレッドに通知（任意）
-                    client.chat_postEphemeral(
+                    
+                    # --- 【修正点】全員に見える形でスレッドに通知 ---
+                    client.chat_postMessage(
                         channel=channel,
-                        user=user_id,
                         thread_ts=ts,
-                        text=f"ⓘ {date} の勤怠データを取り消しました（打ち消し線を検知）"
+                        text=f"~{date} の勤怠連絡を取り消しました~"
                     )
+                    logger.info(f"Auto-deleted by AI strikethrough: {user_id} on {date}")
                 except Exception as e:
-                    # 削除対象がない場合はパス
-                    logger.info(f"自動削除スキップ（対象なし）: {date}")
-                continue # 次のデータへ
+                    logger.info(f"Delete skipped (not found or error): {date}")
+                continue
 
             # --- 通常の保存処理 ---
             record = attendance_service.save_attendance(
@@ -106,7 +107,6 @@ def process_attendance_core(event, client, attendance_service, notification_serv
                 channel_id=channel, ts=ts
             )
             
-            # スレッド内操作ボタン（色の指定なし＝グレー）
             actions = [
                 {"type": "button", "text": {"type": "plain_text", "text": "修正"}, "action_id": "open_update_attendance", "value": date},
                 {"type": "button", "text": {"type": "plain_text", "text": "取消"}, "action_id": "delete_attendance_request", "value": date}
