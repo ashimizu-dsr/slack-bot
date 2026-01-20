@@ -29,37 +29,40 @@ class NotificationService:
                                  is_update: bool = False,
                                  message_ts: Optional[str] = None) -> None:
         """
-        打刻時の個別通知（スレッド返信 or メッセージ上書き）
-        ※完全に動的にチャンネルを特定します
+        打刻内容とボタンをスレッド内に投稿・更新する。
         """
         from resources.views.modal_views import create_attendance_card_blocks
-        blocks = create_attendance_card_blocks(record, message_text, options, is_update=is_update)
+        
+        # ポイント：上書き時(is_update=True)でも show_buttons=True になるようにする
+        # ※ もし関数の引数に show_buttons があればそれを True で渡す
+        blocks = create_attendance_card_blocks(
+            record, 
+            message_text, 
+            options, 
+            is_update=is_update,
+            show_buttons=True  # ここを強制的に True にする
+        )
         
         try:
-            # ターゲットチャンネルを動的に特定
-            if isinstance(record, dict):
-                target_channel = channel or record.get('channel_id')
-            else:
-                target_channel = channel or getattr(record, 'channel_id', None)
+            target_channel = channel or (record.get('channel_id') if isinstance(record, dict) else getattr(record, 'channel_id', None))
 
-            if not target_channel:
-                logger.warning("通知送信スキップ: ターゲットチャンネルが不明です。")
-                return
-
-            if is_update and message_ts:
+            # A. 上書き (既存のボタン付きメッセージを更新)
+            if message_ts:
                 self.client.chat_update(
                     channel=target_channel,
                     ts=message_ts,
-                    blocks=blocks,
+                    blocks=blocks, # ボタンが含まれた新しいブロックで上書き
                     text="勤怠記録を更新しました"
                 )
-            else:
-                self.client.chat_postMessage(
-                    channel=target_channel,
-                    blocks=blocks,
-                    text="勤怠を記録しました", 
-                    thread_ts=thread_ts
-                )
+                return
+
+            # B. 新規投稿 (スレッド内への返信)
+            self.client.chat_postMessage(
+                channel=target_channel,
+                thread_ts=thread_ts,
+                blocks=blocks, # ここにもボタンが含まれる
+                text="勤怠を記録しました"
+            )
         except Exception as e:
             logger.error(f"通知送信失敗: {e}")
 

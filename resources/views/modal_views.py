@@ -280,10 +280,10 @@ def create_setup_message_blocks():
         }
     ]
 
-
 def create_attendance_card_blocks(record: Any, message_text: str = "", options: Optional[List[Dict]] = None, **kwargs) -> List[Dict[str, Any]]:
     """
     ヘッダーをcontextブロックで小文字化し、内容をsectionで表示します。
+    常に「修正」「取消」ボタンを含めて返却します。
     """
     def get_val(obj, key):
         if isinstance(obj, dict): return obj.get(key)
@@ -294,31 +294,31 @@ def create_attendance_card_blocks(record: Any, message_text: str = "", options: 
     date_val = get_val(record, 'date')
     note_val = get_val(record, 'note')
 
+    # kwargsからフラグを取得（NotificationServiceから渡される想定）
+    is_update = kwargs.get("is_update", False)
+    # ボタンを表示するかどうかの制御（デフォルトTrue）
+    show_buttons = kwargs.get("show_buttons", True)
+
     status_jp = STATUS_TRANSLATION.get(status_raw, status_raw)
     
-    # 1. 小文字にしたいテキスト（ヘッダー）
-    header_text = f"ⓘ <@{user_id}> さんの勤怠連絡を記録しました"
+    # 修正時はヘッダーのテキストを少し変える
+    label = "を修正しました" if is_update else "を記録しました"
+    header_text = f"ⓘ <@{user_id}> さんの勤怠連絡{label}"
     
-    # 2. メインの内容（日付と区分）
-    body_date = f"*  {date_val} [ {status_jp} ]*"
+    body_date = f"* {date_val} [ {status_jp} ]*"
     
-    # 3. 備考
     body_note = ""
     if note_val:
-        # 備考にも少しインデントを入れる
         indented_note = "\n".join([f"  {line}" for line in note_val.split("\n")])
         body_note = f"\n{indented_note}"
 
-    # ブロックの組み立て
     blocks = [
-        # ここを context にすることで小文字（グレー）になります
         {
             "type": "context",
             "elements": [
                 {"type": "mrkdwn", "text": header_text}
             ]
         },
-        # ここは通常の section で太字などを活かします
         {
             "type": "section",
             "text": {
@@ -328,7 +328,26 @@ def create_attendance_card_blocks(record: Any, message_text: str = "", options: 
         }
     ]
     
-    if options:
+    # --- ボタンブロックの追加 ---
+    if show_buttons:
+        # optionsが渡されていない場合は、標準の「修正・取消」ボタンを作成
+        if not options:
+            options = [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "修正"},
+                    "action_id": "open_update_attendance",
+                    "value": str(date_val)  # 日付を渡す
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "取消"},
+                    "style": "danger",
+                    "action_id": "delete_attendance_request",
+                    "value": str(date_val) # 日付を渡す
+                }
+            ]
+        
         blocks.append({"type": "actions", "elements": options})
         
     return blocks

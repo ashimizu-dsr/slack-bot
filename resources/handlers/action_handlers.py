@@ -95,8 +95,10 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
         channel_id = body["container"]["channel_id"]
 
         try:
+            # Firestoreから既存レコードを取得
             record = get_single_attendance_record(workspace_id, user_id, date)
             
+            # --- 本人チェック ---
             if not record or record.get("user_id") != user_id:
                 client.chat_postEphemeral(
                     channel=channel_id,
@@ -105,16 +107,21 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                 )
                 return
 
-            # 削除対象のメッセージIDも渡しておく
-            private_metadata = json.dumps({
+            # 上書き・削除に必要な情報をJSONにする
+            metadata_dict = {
                 "date": date,
                 "message_ts": body["container"]["message_ts"],
                 "channel_id": channel_id
-            })
+            }
+
+            # --- ここを修正 ---
+            # 引数で渡さず、まず生成してから後付けでセットする
+            view = create_delete_confirm_modal(date) 
+            view["private_metadata"] = json.dumps(metadata_dict)
 
             client.views_open(
                 trigger_id=trigger_id,
-                view=create_delete_confirm_modal(date, private_metadata=private_metadata)
+                view=view
             )
         except Exception as e:
             logger.error(f"取消モーダル表示失敗: {e}")
