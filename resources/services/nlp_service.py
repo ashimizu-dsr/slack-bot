@@ -56,21 +56,39 @@ def _format_note(att_data: Dict) -> str:
 def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
     """
     メッセージから勤怠情報を抽出する。
-    戻り値: {'date': 'YYYY-MM-DD', 'status': '...', 'note': '...', '_additional_attendances': [...]}
+    修正ポイント：コードブロック除去、打ち消し線の削除判定、actionフラグの追加
     """
     api_key = os.getenv("OPENAI_API_KEY")
     if not text or not api_key or not OpenAI:
         return None
 
+    # --- 修正点1: 前処理（ノイズ除去と記号の強調） ---
+    # A. コードブロック (```...``` や `...`) を完全に削除して誤認を防ぐ
+    clean_text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
+    clean_text = re.sub(r'`.*?`', '', clean_text)
+    
+    # B. 打ち消し線 (~...~) を明示的な削除指示テキストに置換する
+    # AIが記号を見落とさないよう、「これは消すべきデータだ」と言葉で教える
+    clean_text = re.sub(r'~(.*?)~', r'\n【DELETE/CANCEL】: \1\n', clean_text)
+
     client = OpenAI(api_key=api_key)
-    base_date = datetime.date.today() # システムの日付を使用
+    base_date = datetime.date.today() 
     
     try:
+        # --- 修正点2: システムプロンプトの更新 ---
+        # "action" フィールドを追加させ、削除指示を判定させる
+        system_instruction = (
+            "Extract attendance info to JSON: {is_attendance: bool, attendances: "
+            "[{date, status, start_time, end_time, note, action}]}. "
+            "IMPORTANT: If the line contains '【DELETE/CANCEL】', set action to 'delete'. "
+            "Otherwise, set action to 'save'."
+        )
+
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Extract attendance info to JSON: {is_attendance: bool, attendances: [{date, status, start_time, end_time, note}]}"},
-                {"role": "user", "content": f"Today: {base_date}\nText: {text}"}
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": f"Today: {base_date}\nText: {clean_text}"}
             ],
             response_format={"type": "json_object"},
             temperature=0.2
@@ -81,25 +99,22 @@ def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
             return None
 
         attendances = data["attendances"]
-        main_att = attendances[0]
+        
+        # 整形処理用のヘルパー
+        def format_result(att):
+            return {
+                "date": att.get("date") or base_date.isoformat(),
+                "status": _normalize_status(att.get("status", "other")),
+                "note": _format_note(att),
+                "action": att.get("action", "save") # 追加：delete or save
+            }
 
-        # データの整形
-        result = {
-            "date": main_att.get("date") or base_date.isoformat(),
-            "status": _normalize_status(main_att.get("status", "other")),
-            "note": _format_note(main_att)
-        }
+        # 1件目の処理
+        result = format_result(attendances[0])
 
-        # 複数日ある場合
+        # 2件目以降（複数日）の処理
         if len(attendances) > 1:
-            result["_additional_attendances"] = [
-                {
-                    "date": a.get("date") or base_date.isoformat(),
-                    "status": _normalize_status(a.get("status", "other")),
-                    "note": _format_note(a)
-                }
-                for a in attendances[1:]
-            ]
+            result["_additional_attendances"] = [format_result(a) for a in attendances[1:]]
 
         return result
 

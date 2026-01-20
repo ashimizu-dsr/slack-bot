@@ -46,7 +46,7 @@ def should_process_message(event) -> bool:
 
 def process_attendance_core(event, client, attendance_service, notification_service):
     """
-    AI解析を実行し、結果を保存・通知するコアロジック
+    AI解析を実行し、結果に基づいて保存または削除を実行する
     """
     user_id = event.get("user")
     workspace_id = event.get("team")
@@ -54,51 +54,64 @@ def process_attendance_core(event, client, attendance_service, notification_serv
     channel = event.get("channel")
     text = (event.get("text") or "").strip()
 
-    # 二重処理防止（Slackのリトライ対策）
+    # 二重処理防止
     msg_key = f"{channel}:{ts}"
     if msg_key in _processed_message_ts:
-        logger.info(f"Skip duplicated message: {msg_key}")
         return
     _processed_message_ts.add(msg_key)
 
     try:
-        # 名寄せ用Email取得
         email: Optional[str] = get_user_email(client, user_id, logger)
         
-        # AI解析の実行
-        logger.info(f"AI解析開始: user={user_id}, text={text[:20]}...")
+        # AI解析の実行（修正後の extract_attendance_from_text を想定）
         extraction = extract_attendance_from_text(text)
         
         if not extraction:
-            logger.info(f"解析スキップ: 勤怠情報なし")
             return
 
-        # リアクションを追加（受付中）
+        # 受付中リアクション
         try:
             client.reactions_add(channel=channel, name="outbox_tray", timestamp=ts)
         except Exception: pass
 
-        # 抽出データの正規化（単一/複数日対応）
+        # 抽出データのリスト化
         attendances = [extraction]
         if "_additional_attendances" in extraction:
             attendances.extend(extraction["_additional_attendances"])
 
         for att in attendances:
             date = att.get("date")
-            # DB保存
+            action = att.get("action", "save") # AIが判定した action (save or delete)
+
+            if action == "delete":
+                # --- 追加：自動削除ロジック ---
+                try:
+                    attendance_service.delete_attendance(workspace_id, user_id, date)
+                    # 削除した旨をスレッドに通知（任意）
+                    client.chat_postEphemeral(
+                        channel=channel,
+                        user=user_id,
+                        thread_ts=ts,
+                        text=f"ⓘ {date} の勤怠データを取り消しました（打ち消し線を検知）"
+                    )
+                except Exception as e:
+                    # 削除対象がない場合はパス
+                    logger.info(f"自動削除スキップ（対象なし）: {date}")
+                continue # 次のデータへ
+
+            # --- 通常の保存処理 ---
             record = attendance_service.save_attendance(
                 workspace_id=workspace_id, user_id=user_id, email=email,
                 date=date, status=att.get("status"), note=att.get("note", ""), 
                 channel_id=channel, ts=ts
             )
             
-            # スレッド内操作ボタン
+            # スレッド内操作ボタン（色の指定なし＝グレー）
             actions = [
                 {"type": "button", "text": {"type": "plain_text", "text": "修正"}, "action_id": "open_update_attendance", "value": date},
                 {"type": "button", "text": {"type": "plain_text", "text": "取消"}, "action_id": "delete_attendance_request", "value": date}
             ]
 
-            # スレッドへ完了通知
             notification_service.notify_attendance_change(
                 record=record, 
                 options=actions, 

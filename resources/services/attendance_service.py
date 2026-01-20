@@ -147,3 +147,44 @@ class AttendanceService:
             raise ValidationError(f"Invalid status: {record.status}", "⚠️ 選択された区分が正しくありません。")
         if len(record.date) != 10:
             raise ValidationError(f"Invalid date format: {record.date}", "⚠️ 日付の形式が正しくありません。")
+
+    def process_ai_extraction_result(self, workspace_id: str, user_id: str, email: str, 
+                                     extracted_data: Dict[str, Any], 
+                                     channel_id: str = "", ts: str = "") -> List[AttendanceRecord]:
+        """
+        AIの抽出結果（複数日対応）をループで回し、保存または削除を自動実行する
+        """
+        processed_records = []
+        
+        # メインの打刻と追加の打刻を一つのリストにまとめる
+        all_items = []
+        if extracted_data:
+            # 1件目
+            all_items.append(extracted_data)
+            # 2件目以降（あれば）
+            if "_additional_attendances" in extracted_data:
+                all_items.extend(extracted_data["_additional_attendances"])
+
+        for item in all_items:
+            date = item.get("date")
+            action = item.get("action", "save") # デフォルトは保存
+
+            if action == "delete":
+                # AIが「打ち消し線あり」と判断した日付を削除
+                logger.info(f"AIによる自動削除を実行: User={user_id}, Date={date}")
+                self.delete_attendance(workspace_id, user_id, date)
+            else:
+                # 通常の保存
+                record = self.save_attendance(
+                    workspace_id=workspace_id,
+                    user_id=user_id,
+                    email=email,
+                    date=date,
+                    status=item.get("status", "other"),
+                    note=item.get("note", ""),
+                    channel_id=channel_id,
+                    ts=ts
+                )
+                processed_records.append(record)
+        
+        return processed_records
