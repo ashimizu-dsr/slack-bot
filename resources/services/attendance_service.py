@@ -1,13 +1,11 @@
 """
 Attendance Service - 勤怠管理のビジネスロジック。
-データの検証、Firestore保存の依頼、履歴の取得を担当します。
 """
 
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 import logging
 
-# db.py からクラウド対応済みの関数をインポート
 from resources.shared.db import (
     save_attendance_record, 
     get_single_attendance_record,
@@ -31,26 +29,23 @@ class AttendanceRecord:
     note: str = ""
     channel_id: Optional[str] = None
     ts: Optional[str] = None
+    action_taken: str = "save"  # 追加: どの処理が行われたか(save/delete)を識別
 
 class AttendanceService:
     """勤怠操作を管理するサービス"""
 
     def __init__(self):
-        # 有効なステータスリスト
         self.valid_statuses = ["late", "early_leave", "out", "remote", "vacation", "other"]
 
     def save_attendance(self, workspace_id: str, user_id: str, email: Optional[str], date: str, status: str, 
                         note: str = "", channel_id: str = "", ts: str = "") -> AttendanceRecord:
-        """勤怠記録を保存（新規・更新の両方に対応）"""
-        
+        """勤怠記録を保存"""
         safe_email = email if email is not None else ""
-        record = AttendanceRecord(workspace_id, user_id, safe_email, date, status, note, channel_id, ts)
+        record = AttendanceRecord(workspace_id, user_id, safe_email, date, status, note, channel_id, ts, action_taken="save")
         
-        # バリデーションの実行
         self._validate_record(record)
 
         try:
-            # db.py 経由で Firestore に保存
             save_attendance_record(workspace_id, user_id, safe_email, date, status, note, channel_id, ts)
             logger.info(f"勤怠記録保存成功: User={user_id}, Date={date}")
             return record
@@ -58,23 +53,11 @@ class AttendanceService:
             logger.error(f"Firestore保存失敗: {e}")
             raise Exception("データベースへの保存に失敗しました。")
 
-    def get_specific_date_record(self, workspace_id: str, user_id: str, date: str) -> Optional[Dict[str, Any]]:
-        """特定の日付の記録を1件取得"""
-        try:
-            return get_single_attendance_record(workspace_id, user_id, date)
-        except Exception as e:
-            logger.error(f"データ取得失敗: {e}")
-            return None
-
     def delete_attendance(self, workspace_id: str, user_id: str, date: str, silent: bool = False) -> bool:
-        """
-        勤怠記録を削除
-        silent=True の場合、対象が存在しなくても例外を投げずに正常終了を返す（AI解析用）
-        """
+        """勤怠記録を削除"""
         existing = get_single_attendance_record(workspace_id, user_id, date)
         if not existing:
-            if silent:
-                return True
+            if silent: return True
             raise ValidationError("削除対象が見つかりません", "⚠️ 削除対象の勤怠記録が見つかりません。")
 
         try:
@@ -85,15 +68,15 @@ class AttendanceService:
             logger.error(f"削除失敗: {e}")
             return False
 
-    def get_user_history(self, user_id: str, month_filter: Optional[str] = None, email: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_user_history(self, workspace_id: str, user_id: str, month_filter: Optional[str] = None, email: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        ユーザーの履歴を取得（名寄せ対応）
-        不具合①対策：filter文字列のトリミング処理を追加
+        ユーザーの履歴を取得
+        修正ポイント: Action Handlerからの呼び出しに合わせて workspace_id を追加
         """
         try:
-            # 空文字やNoneの揺れを吸収
             clean_month = month_filter.strip() if month_filter else ""
             return get_user_history_from_db(
+                workspace_id=workspace_id, # DB関数側が対応している前提
                 user_id=user_id,
                 email=email,
                 month_filter=clean_month
@@ -102,23 +85,15 @@ class AttendanceService:
             logger.error(f"履歴取得エラー: {e}")
             return []
 
-    def get_daily_report(self, date_str: Optional[str] = None) -> List[Dict[str, Any]]:
-        """指定日の全ユーザーの状況を取得"""
-        return get_today_records(date_str)
-
     def get_daily_report_data(self, workspace_id: str, date_str: str, channel_id: str) -> Dict[str, List[Dict[str, Any]]]:
-        """指定日の全課の勤怠データを一括取得（Firestore対応版）"""
         report_data = {}
-        
         try:
             section_user_map, _ = get_channel_members_with_section()
-            all_today_records = self.get_daily_report(date_str)
+            all_today_records = get_today_records(date_str)
             attendance_lookup = {r['user_id']: r for r in all_today_records}
 
             for section, user_ids in section_user_map.items():
-                if section not in report_data:
-                    report_data[section] = []
-                
+                report_data[section] = []
                 for u_id in user_ids:
                     if u_id in attendance_lookup:
                         record = attendance_lookup[u_id]
@@ -133,58 +108,62 @@ class AttendanceService:
             return {}
 
     def _validate_record(self, record: AttendanceRecord) -> None:
-        """入力データの整合性チェック"""
-        if not record.workspace_id:
-            raise ValidationError("Workspace ID missing", "⚠️ ワークスペース情報が正しく取得できませんでした。")
-        if not record.user_id:
-            raise ValidationError("User ID missing", "⚠️ ユーザー情報が正しく取得できませんでした。")
-        if not record.date:
-            raise ValidationError("Date missing", "⚠️ 日付が指定されていません。")
-        if not record.status:
-            raise ValidationError("Status missing", "⚠️ 区分を選択してください。")
+        if not record.workspace_id: raise ValidationError("Workspace ID missing", "⚠️ ワークスペース情報が正しくありません。")
+        if not record.user_id: raise ValidationError("User ID missing", "⚠️ ユーザー情報が正しくありません。")
+        if not record.date: raise ValidationError("Date missing", "⚠️ 日付が指定されていません。")
+        if not record.status: raise ValidationError("Status missing", "⚠️ 区分を選択してください。")
         if record.status not in self.valid_statuses:
             raise ValidationError(f"Invalid status: {record.status}", "⚠️ 選択された区分が正しくありません。")
-        if len(record.date) != 10:
-            raise ValidationError(f"Invalid date format: {record.date}", "⚠️ 日付の形式が正しくありません。")
 
     def process_ai_extraction_result(self, workspace_id: str, user_id: str, email: str, 
                                      extracted_data: Dict[str, Any], 
                                      channel_id: str = "", ts: str = "") -> List[AttendanceRecord]:
         """
-        AIの抽出結果（複数日対応）をループで回し、保存または削除を自動実行する
+        AIの抽出結果を処理
+        不具合②対策: 打ち消し線があっても内容があるなら保存として扱う
         """
         processed_records = []
         all_items = []
         if extracted_data:
-            all_items.append(extracted_data)
+            # 辞書自体が1つのデータの場合と、リスト形式の場合の両方を考慮
+            base_item = {k: v for k, v in extracted_data.items() if k != "_additional_attendances"}
+            if base_item.get("date"):
+                all_items.append(base_item)
             if "_additional_attendances" in extracted_data:
                 all_items.extend(extracted_data["_additional_attendances"])
 
         for item in all_items:
             try:
                 date = item.get("date")
-                action = item.get("action", "save") # デフォルトは保存
+                action = item.get("action", "save")
+                status = item.get("status")
+
+                # 【重要】不具合②対策ロジック
+                # AIがdeleteと判定していても、status（区分）が抽出されている場合は「書き換え」とみなす
+                if action == "delete" and status and status in self.valid_statuses:
+                    logger.info(f"打ち消し線後の訂正を検知: {date} のアクションを save に変更します。")
+                    action = "save"
 
                 if action == "delete":
-                    # AIが「打ち消し線等による完全削除」と判断した日付を削除
-                    # 既にデータがない場合も考慮し silent=True に設定
-                    logger.info(f"AIによる自動削除を実行: User={user_id}, Date={date}")
-                    self.delete_attendance(workspace_id, user_id, date, silent=True)
+                    success = self.delete_attendance(workspace_id, user_id, date, silent=True)
+                    if success:
+                        # 削除成功時も通知を出せるよう、ダミーレコードをリストに入れる
+                        processed_records.append(AttendanceRecord(
+                            workspace_id, user_id, email, date, status="deleted", action_taken="delete"
+                        ))
                 else:
-                    # 通常の保存（不具合②対策：打ち消し線があってもaction=saveならこちらに来る）
                     record = self.save_attendance(
                         workspace_id=workspace_id,
                         user_id=user_id,
                         email=email,
                         date=date,
-                        status=item.get("status", "other"),
+                        status=status or "other",
                         note=item.get("note", ""),
                         channel_id=channel_id,
                         ts=ts
                     )
                     processed_records.append(record)
             except Exception as e:
-                # 複数日の場合、1件のエラーで全停止させない
                 logger.error(f"AI抽出結果の個別処理中にエラーが発生 ({item.get('date')}): {e}")
                 continue
         
