@@ -1,155 +1,156 @@
 """
 Notification Service - Slackへのメッセージ送信・通知処理を担当
-打刻内容（全体公開）＋操作ボタン（本人限定）のハイブリッド構成
+Firestore / Google Cloud 対応版 (スレッド返信・チャンネル自動取得対応)
 """
 
 import datetime
 import logging
 import time
 import os
-import json
-import requests
 from typing import Any, Dict, List, Optional
 
-from resources.shared.db import get_channel_members_with_section
+# ステータス翻訳をインポート
 from resources.constants import STATUS_TRANSLATION
 
+# loggerの設定
 logger = logging.getLogger(__name__)
 
 class NotificationService:
     def __init__(self, slack_client, attendance_service=None):
+        """
+        初期化
+        """
         self.client = slack_client
         self.attendance_service = attendance_service
 
     def notify_attendance_change(self, record: Any, message_text: str = "",
                                  options: Any = None, channel: Optional[str] = None,
-                                 user_id: Optional[str] = None,
-                                 response_url: Optional[str] = None,
-                                 is_update: bool = False) -> None:
+                                 thread_ts: Optional[str] = None,
+                                 is_update: bool = False,
+                                 message_ts: Optional[str] = None) -> None:
         """
-        打刻・修正時の通知。
-        - チャンネル全体には「打刻内容」を通知（ボタンなし）。
-        - 本人には「修正・取消ボタン」をエフェメラルで通知。
+        打刻時の個別通知（スレッド返信 or メッセージ上書き）
+        ※完全に動的にチャンネルを特定します
         """
-        # 循環参照を避けるためメソッド内でインポート
         from resources.views.modal_views import create_attendance_card_blocks
+        blocks = create_attendance_card_blocks(record, message_text, options, is_update=is_update)
         
         try:
-            # 1. データの整理
+            # ターゲットチャンネルを動的に特定
             if isinstance(record, dict):
                 target_channel = channel or record.get('channel_id')
-                target_user = user_id or record.get('user_id')
             else:
                 target_channel = channel or getattr(record, 'channel_id', None)
-                target_user = user_id or getattr(record, 'user_id', None)
 
-            if not target_channel or not target_user:
-                logger.warning("通知送信スキップ: ターゲットが不明です。")
+            if not target_channel:
+                logger.warning("通知送信スキップ: ターゲットチャンネルが不明です。")
                 return
 
-            # --- A. チャンネル全体への通知（ボタンなし） ---
-            # create_attendance_card_blocks 内で buttons=False になるよう調整が必要
-            # ※もし views 側で制御してなければ、ここで blocks を加工するか、引数を追加してください
-            public_blocks = create_attendance_card_blocks(record, message_text, options, is_update=is_update, show_buttons=False)
-            
-            # 修正(is_update=True)の時は、二重投稿を避けるため全体通知はスキップしても良いかもしれません
-            if not is_update:
+            if is_update and message_ts:
+                self.client.chat_update(
+                    channel=target_channel,
+                    ts=message_ts,
+                    blocks=blocks,
+                    text="勤怠記録を更新しました"
+                )
+            else:
                 self.client.chat_postMessage(
                     channel=target_channel,
-                    blocks=public_blocks,
-                    text="勤怠が記録されました"
+                    blocks=blocks,
+                    text="勤怠を記録しました", 
+                    thread_ts=thread_ts
                 )
-
-            # --- B. 操作ボタンの通知（本人にのみ表示・上書き対応） ---
-            # 本人用にはボタンありのブロックを作成
-            private_blocks = create_attendance_card_blocks(record, message_text, options, is_update=is_update, show_buttons=True)
-
-            if response_url:
-                # 修正ボタン等が押された後の「上書き」
-                payload = {
-                    "replace_original": "true",
-                    "response_type": "ephemeral",
-                    "blocks": private_blocks,
-                    "text": "勤怠記録を更新しました（あなたにのみ表示されています）"
-                }
-                requests.post(response_url, json=payload)
-            else:
-                # 新規打刻時の「本人専用ボタン」送信
-                self.client.chat_postEphemeral(
-                    channel=target_channel,
-                    user=target_user,
-                    blocks=private_blocks,
-                    text="この投稿の修正・取消はこちらから行えます（あなたにのみ表示されています）"
-                )
-
-            logger.info(f"Hybrid notification sent: Public to {target_channel}, Private to {target_user}")
-
         except Exception as e:
-            logger.error(f"通知処理失敗: {e}")
+            logger.error(f"通知送信失敗: {e}")
 
-    # (send_daily_report は変更なし)
+    def _get_bot_joined_channels(self) -> List[str]:
+        """
+        Botが参加しているチャンネルIDの一覧を取得（動的な取得）
+        """
+        try:
+            # Botが参加している公開チャンネルを一覧取得
+            response = self.client.conversations_list(types="public_channel", filter_basic_slots=True)
+            joined_channels = [
+                c["id"] for c in response["channels"] 
+                if c.get("is_member", False)
+            ]
+            return joined_channels
+        except Exception as e:
+            logger.error(f"チャンネル一覧取得失敗: {e}")
+            return []
 
     def send_daily_report(self, date_str: str) -> None: 
         """
-        【クラウド版】JSTを考慮し、動的なチャンネル指定でレポートを送信。
+        【クラウド版】
+        Botが参加している全チャンネルに対してレポートを送信します（環境変数不要）
         """
         if not self.attendance_service:
             logger.error("attendance_service が未設定のためレポート送信不可。")
             return
 
         start_time = time.time()
-        section_user_map, _ = get_channel_members_with_section()
+        
+        # 1. 送信先の動的取得（Botが参加しているチャンネル）
+        target_channels = self._get_bot_joined_channels()
+        
+        # フォールバック：もし動的取得が空なら環境変数を試す（移行期間用）
+        if not target_channels:
+            env_channel = os.environ.get("CHANNEL_ID")
+            if env_channel:
+                target_channels = [env_channel]
 
-        if not section_user_map:
-            logger.info("レポート送信対象の設定が見つかりません。")
+        if not target_channels:
+            logger.error("レポート送信先が見つかりません。Botをチャンネルに招待してください。")
             return
 
+        # 2. 日付タイトルの準備
         try:
             dt = datetime.date.fromisoformat(date_str)
-        except Exception:
+        except:
             dt = datetime.date.today()
-
         weekday_list = ["月", "火", "水", "木", "金", "土", "日"]
         title_date = f"{dt.strftime('%m/%d')}({weekday_list[dt.weekday()]})"
         
+        # 3. Firestoreからメンバー設定を取得
+        from resources.shared.db import get_channel_members_with_section
+        section_user_map, _ = get_channel_members_with_section()
+
+        # 4. 各チャンネルに対してレポート生成と送信
         all_sections = [
             ("sec_1", "1課"), ("sec_2", "2課"), ("sec_3", "3課"), ("sec_4", "4課"),
             ("sec_5", "5課"), ("sec_6", "6課"), ("sec_7", "7課"), ("sec_finance", "金融開発課")
         ]
 
-        try:
-            workspace_id = os.environ.get("SLACK_WORKSPACE_ID", "GLOBAL_WS")
-            target_report_channel = os.environ.get("CHANNEL_ID")
+        workspace_id = os.environ.get("SLACK_WORKSPACE_ID", "GLOBAL_WS")
 
-            if not target_report_channel:
-                logger.error("CHANNEL_ID 未設定。")
-                return
+        for channel_id in target_channels:
+            try:
+                # データの取得
+                all_attendance_data = self.attendance_service.get_daily_report_data(
+                    workspace_id, date_str, channel_id
+                )
 
-            all_attendance_data = self.attendance_service.get_daily_report_data(
-                workspace_id, date_str, target_report_channel
-            )
+                blocks = [{"type": "header", "text": {"type": "plain_text", "text": f"{title_date}の勤怠一覧"}}]
 
-            blocks = [{"type": "header", "text": {"type": "plain_text", "text": f"{title_date}の勤怠一覧"}}]
+                for sec_id, sec_name in all_sections:
+                    records = all_attendance_data.get(sec_id, [])
+                    blocks.append({"type": "divider"})
+                    blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*{sec_name}*"}})
 
-            for sec_id, sec_name in all_sections:
-                records = all_attendance_data.get(sec_id, [])
-                blocks.append({"type": "divider"})
-                blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*{sec_name}*"}})
+                    if not records:
+                        content_text = "_勤怠連絡はありません_"
+                    else:
+                        records.sort(key=lambda x: x.get('status', ''))
+                        lines = [f"• <@{r['user_id']}> - *{STATUS_TRANSLATION.get(r['status'], r['status'])}*{f' ({r['note']})' if r.get('note') else ''}" for r in records]
+                        content_text = "\n".join(lines)
 
-                if not records:
-                    content_text = "_勤怠連絡はありません_"
-                else:
-                    records.sort(key=lambda x: x.get('status', ''))
-                    lines = [f"• <@{r['user_id']}> - *{STATUS_TRANSLATION.get(r['status'], r['status'])}*{f' ({r['note']})' if r.get('note') else ''}" for r in records]
-                    content_text = "\n".join(lines)
+                    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": content_text}]})
 
-                blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": content_text}]})
+                self.client.chat_postMessage(channel=channel_id, blocks=blocks, text=f"{title_date}の勤怠一覧")
+                logger.info(f"Daily report sent successfully to {channel_id}")
 
-            self.client.chat_postMessage(channel=target_report_channel, blocks=blocks, text=f"{title_date}の勤怠一覧")
-            logger.info(f"Daily report sent to {target_report_channel}")
-
-        except Exception as e:
-            logger.error(f"レポート送信エラー: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"チャンネル {channel_id} へのレポート送信中にエラー: {e}")
 
         total_end = time.time()
-        logger.info(f"レポート送信完了: {total_end - start_time:.4f}秒")
+        logger.info(f"レポート送信処理完了 所要時間: {total_end - start_time:.4f}秒")

@@ -74,8 +74,11 @@ def slack_bot(request):
         try:
             # 日本時間 (JST) の日付を取得
             # Cloud Runのシステム時間はUTCのため、+9時間して日付を確定させる
-            now_jst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
-            today_str = now_jst.date().isoformat()
+            # now_jst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+            from datetime import timezone, timedelta
+            JST = timezone(timedelta(hours=9))
+            today_str = datetime.datetime.now(JST).date().isoformat()
+            # today_str = now_jst.date().isoformat()
             
             logger.info(f"Target date for report: {today_str}")
             
