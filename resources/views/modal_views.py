@@ -524,3 +524,173 @@ def create_member_settings_modal_v2(
             "selected_group_id": selected_group_id
         })
     }
+
+# ==========================================
+# 7. v2.1 設定モーダル（テキスト入力版・UPSERT方式）
+# ==========================================
+def _generate_groups_list_text(groups: List[Dict[str, Any]]) -> str:
+    """
+    登録済みグループ一覧のテキストを生成します。
+    
+    Args:
+        groups: グループ情報の配列
+            [{"group_id": "...", "name": "...", "member_ids": [...]}, ...]
+        
+    Returns:
+        Markdown形式の箇条書きテキスト
+        
+    Example:
+        • 営業1課 (3人)
+        • 営業2課 (5人)
+        • 開発課 (8人)
+    """
+    if not groups:
+        return "_まだグループが登録されていません_"
+    
+    lines = []
+    for group in groups:
+        name = group.get("name", "不明なグループ")
+        member_count = len(group.get("member_ids", []))
+        lines.append(f"• {name} ({member_count}人)")
+    
+    return "\n".join(lines)
+
+
+def create_member_settings_modal_v2_1(
+    admin_ids: List[str],
+    all_groups: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    v2.1の設定モーダルを生成します（テキスト入力版・UPSERT方式）。
+    
+    Args:
+        admin_ids: 現在の管理者のユーザーID配列
+        all_groups: 全グループ情報の配列
+            [{"group_id": "...", "name": "...", "member_ids": [...]}, ...]
+        
+    Returns:
+        Slack モーダルビューの辞書
+        
+    Note:
+        v2.0との違い:
+        - グループ選択のドロップダウンを廃止
+        - グループ名をテキスト入力で指定（UPSERT: 既存なら更新、新規なら作成）
+        - 登録済みグループ一覧を常時表示（context block）
+        - 動的更新（views.update）は不要
+    """
+    # 登録済みグループ一覧のテキスト生成
+    groups_text = _generate_groups_list_text(all_groups)
+    
+    return {
+        "type": "modal",
+        "callback_id": "member_settings_v2_1",
+        "title": {
+            "type": "plain_text",
+            "text": "9:00レポート設定"
+        },
+        "submit": {
+            "type": "plain_text",
+            "text": "保存"
+        },
+        "close": {
+            "type": "plain_text",
+            "text": "キャンセル"
+        },
+        "blocks": [
+            {
+                "type": "input",
+                "block_id": "admin_users_block",
+                "element": {
+                    "type": "multi_users_select",
+                    "action_id": "admin_users_select",
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": "ユーザを選択"
+                    },
+                    **({"initial_users": admin_ids} if admin_ids else {})
+                },
+                "label": {
+                    "type": "plain_text",
+                    "text": "管理者 (全グループ共通)"
+                }
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": "ⓘ 管理者に設定されたユーザに当日の勤怠情報が通知されます。"
+                    }
+                ]
+            },
+            {"type": "divider"},
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*登録済みグループ:*"
+                }
+            },
+            {
+                "type": "context",
+                "block_id": "registered_groups_list",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": groups_text
+                    }
+                ]
+            },
+            {"type": "divider"},
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*グループを作成・更新する*"
+                }
+            },
+            {
+                "type": "input",
+                "block_id": "group_name_input_block",
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "group_name_input",
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": "例：営業1課"
+                    }
+                },
+                "label": {
+                    "type": "plain_text",
+                    "text": "グループ名"
+                },
+                "optional": True
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": "ⓘ 登録済みグループ名を入力すると更新、新規グループ名を入力するとグループが作成されます。"
+                    }
+                ]
+            },
+            {
+                "type": "input",
+                "block_id": "target_members_block",
+                "element": {
+                    "type": "multi_users_select",
+                    "action_id": "target_members_select",
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": "メンバーを選択"
+                    }
+                },
+                "label": {
+                    "type": "plain_text",
+                    "text": "このグループの所属者"
+                },
+                "optional": True
+            }
+        ]
+    }

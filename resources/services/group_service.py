@@ -184,6 +184,41 @@ class GroupService:
             logger.error(f"グループメンバー更新失敗: {e}", exc_info=True)
             raise
 
+    def find_group_by_name(self, workspace_id: str, name: str) -> Optional[Dict[str, Any]]:
+        """
+        グループ名でグループを検索します（v2.1で追加）。
+        
+        Args:
+            workspace_id: Slackワークスペースの一意ID
+            name: グループ名（完全一致、大文字小文字区別あり）
+            
+        Returns:
+            グループ情報の辞書（存在しない場合はNone）
+            
+        Note:
+            - グループ名の前後の空白はトリムしてから検索してください
+            - Firestoreインデックスが必要です（初回実行時に自動作成URLが表示されます）
+        """
+        if not name or not name.strip():
+            return None
+        
+        try:
+            groups_ref = self.db.collection("groups").document(workspace_id)\
+                                .collection("groups")
+            query = groups_ref.where("name", "==", name.strip()).limit(1)
+            docs = list(query.stream())
+            
+            if not docs:
+                logger.info(f"グループが見つかりません: {name}")
+                return None
+            
+            group = docs[0].to_dict()
+            logger.info(f"グループ検索成功: {name}, ID={group.get('group_id')}")
+            return group
+        except Exception as e:
+            logger.error(f"グループ検索失敗: {e}", exc_info=True)
+            return None
+
     def delete_group(self, workspace_id: str, group_id: str) -> None:
         """
         グループを削除します。
@@ -193,6 +228,6 @@ class GroupService:
             group_id: グループの一意ID
             
         Note:
-            v2.0では未実装（v2.1で追加予定）
+            v2.0では未実装（v2.2で追加予定）
         """
-        raise NotImplementedError("グループ削除機能はv2.1で実装予定です。")
+        raise NotImplementedError("グループ削除機能はv2.2で実装予定です。")

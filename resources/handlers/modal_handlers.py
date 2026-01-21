@@ -189,3 +189,86 @@ def register_modal_handlers(app, attendance_service, notification_service) -> No
         except Exception as e:
             logger.error(f"設定保存失敗(v2.0): {e}", exc_info=True)
             ack()
+
+    # ==========================================
+    # 4. v2.1: 設定モーダル「保存」押下（テキスト入力版・UPSERT方式）
+    # ==========================================
+    @app.view("member_settings_v2_1")
+    def handle_member_settings_v2_1_save(ack, body, view):
+        """
+        v2.1設定モーダルの「保存」ボタン押下時の処理。
+        
+        v2.0との違い:
+        - グループ名をテキスト入力から取得
+        - find_group_by_name() で既存グループを検索
+        - UPSERT処理（既存なら更新、新規なら作成）
+        """
+        workspace_id = body["team"]["id"]
+        vals = view["state"]["values"]
+        
+        try:
+            from resources.services.group_service import GroupService
+            from resources.services.workspace_service import WorkspaceService
+            from resources.shared.errors import ValidationError
+            
+            group_service = GroupService()
+            workspace_service = WorkspaceService()
+            
+            # 1. 入力値の取得
+            admin_ids = vals["admin_users_block"]["admin_users_select"].get("selected_users", [])
+            group_name_raw = vals["group_name_input_block"]["group_name_input"].get("value", "")
+            group_name = group_name_raw.strip() if group_name_raw else ""
+            member_ids = vals["target_members_block"]["target_members_select"].get("selected_users", [])
+            
+            # 2. バリデーション
+            if not admin_ids:
+                ack(response_action="errors", errors={
+                    "admin_users_block": "⚠️ 少なくとも1人の管理者を選択してください。"
+                })
+                return
+            
+            if not group_name and member_ids:
+                ack(response_action="errors", errors={
+                    "group_name_input_block": "⚠️ グループ名を入力してください。"
+                })
+                return
+            
+            # 3. グループのUPSERT
+            if group_name:
+                # 既存グループの検索
+                existing_group = group_service.find_group_by_name(workspace_id, group_name)
+                
+                if existing_group:
+                    # 更新
+                    group_service.update_group_members(
+                        workspace_id=workspace_id,
+                        group_id=existing_group["group_id"],
+                        member_ids=member_ids
+                    )
+                    logger.info(f"グループ更新(v2.1): {group_name}, Members={len(member_ids)}")
+                else:
+                    # 作成
+                    group_service.create_group(
+                        workspace_id=workspace_id,
+                        name=group_name,
+                        member_ids=member_ids,
+                        created_by=body["user"]["id"]
+                    )
+                    logger.info(f"グループ作成(v2.1): {group_name}, Members={len(member_ids)}")
+            
+            # 4. 管理者の保存
+            workspace_service.save_admin_ids(workspace_id, admin_ids)
+            logger.info(f"管理者保存(v2.1): Workspace={workspace_id}, Admins={len(admin_ids)}")
+            
+            # 成功
+            ack()
+            logger.info(f"設定保存成功(v2.1): Workspace={workspace_id}")
+            
+        except ValidationError as ve:
+            logger.warning(f"バリデーションエラー(v2.1): {ve}")
+            ack(response_action="errors", errors={
+                "admin_users_block": ve.user_message
+            })
+        except Exception as e:
+            logger.error(f"設定保存失敗(v2.1): {e}", exc_info=True)
+            ack()

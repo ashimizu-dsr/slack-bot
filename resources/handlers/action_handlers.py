@@ -12,6 +12,7 @@ from resources.views.modal_views import (
     create_history_modal_view,
     create_member_settings_modal_view,
     create_member_settings_modal_v2,
+    create_member_settings_modal_v2_1,
     create_delete_confirm_modal
 )
 from resources.shared.db import (
@@ -238,20 +239,22 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             logger.error(f"履歴フィルタ更新失敗: {e}", exc_info=True)
 
     # ==========================================
-    # 6. v2.0: 設定モーダルを開く（動的グループ管理）
+    # 6. v2.1: 設定モーダルを開く（テキスト入力版・UPSERT方式）
     # ==========================================
     @app.shortcut("open_member_setup_modal")
-    def handle_settings_v2_shortcut(ack, body, client):
+    def handle_settings_v2_1_shortcut(ack, body, client):
         """
-        グローバルショートカット「設定」の処理（v2.0版）。
+        グローバルショートカット「設定」の処理（v2.1版）。
         
-        動的グループ管理と管理者設定のモーダルを表示します。
+        v2.0との違い:
+        - グループ選択のドロップダウンを廃止
+        - グループ名をテキスト入力で指定
+        - 動的更新が不要になったため、シンプルな実装
         """
         ack()
         workspace_id = body["team"]["id"]
         
         try:
-            # GroupServiceとWorkspaceServiceをインポート
             from resources.services.group_service import GroupService
             from resources.services.workspace_service import WorkspaceService
             
@@ -264,28 +267,30 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             # 全グループを取得
             all_groups = group_service.get_all_groups(workspace_id)
             
-            # モーダルを生成
-            view = create_member_settings_modal_v2(
+            # モーダルを生成（v2.1版）
+            view = create_member_settings_modal_v2_1(
                 admin_ids=admin_ids,
-                all_groups=all_groups,
-                selected_group_id=None,
-                selected_group_members=[]
+                all_groups=all_groups
             )
             
             client.views_open(trigger_id=body["trigger_id"], view=view)
-            logger.info(f"設定モーダル表示(v2.0): Workspace={workspace_id}, Groups={len(all_groups)}")
+            logger.info(f"設定モーダル表示(v2.1): Workspace={workspace_id}, Groups={len(all_groups)}")
         except Exception as e:
             logger.error(f"設定モーダル表示失敗: {e}", exc_info=True)
 
     # ==========================================
-    # 7. v2.0: グループ選択時の動的更新
+    # 7. v2.0: グループ選択時の動的更新（v2.1では廃止予定）
     # ==========================================
+    # Note: v2.1ではグループ選択をテキスト入力に変更したため、
+    # このハンドラーは将来的に削除予定です。
+    # v2.0のモーダルを使用している場合のみ動作します。
     @app.action("group_select_action")
     def handle_group_select_change(ack, body, client):
         """
-        設定モーダルでグループ選択が変更された時の処理。
+        設定モーダルでグループ選択が変更された時の処理（v2.0のみ）。
         
         選択されたグループのメンバーを表示するためにモーダルを動的更新します。
+        v2.1では不要になりました。
         """
         ack()
         workspace_id = body["team"]["id"]
