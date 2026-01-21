@@ -1,1 +1,0 @@
-# Shared package - Common utilities and dependency injection
