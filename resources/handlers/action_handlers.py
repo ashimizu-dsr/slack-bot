@@ -11,6 +11,7 @@ from resources.views.modal_views import (
     create_attendance_modal_view, 
     create_history_modal_view,
     create_member_settings_modal_view,
+    create_member_settings_modal_v2,
     create_delete_confirm_modal
 )
 from resources.shared.db import (
@@ -235,3 +236,115 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             logger.info(f"履歴フィルタ更新: User={target_user_id}, Month={month_filter}, Count={len(history)}")
         except Exception as e:
             logger.error(f"履歴フィルタ更新失敗: {e}", exc_info=True)
+
+    # ==========================================
+    # 6. v2.0: 設定モーダルを開く（動的グループ管理）
+    # ==========================================
+    @app.shortcut("open_member_setup_modal")
+    def handle_settings_v2_shortcut(ack, body, client):
+        """
+        グローバルショートカット「設定」の処理（v2.0版）。
+        
+        動的グループ管理と管理者設定のモーダルを表示します。
+        """
+        ack()
+        workspace_id = body["team"]["id"]
+        
+        try:
+            # GroupServiceとWorkspaceServiceをインポート
+            from resources.services.group_service import GroupService
+            from resources.services.workspace_service import WorkspaceService
+            
+            group_service = GroupService()
+            workspace_service = WorkspaceService()
+            
+            # 管理者IDを取得
+            admin_ids = workspace_service.get_admin_ids(workspace_id)
+            
+            # 全グループを取得
+            all_groups = group_service.get_all_groups(workspace_id)
+            
+            # モーダルを生成
+            view = create_member_settings_modal_v2(
+                admin_ids=admin_ids,
+                all_groups=all_groups,
+                selected_group_id=None,
+                selected_group_members=[]
+            )
+            
+            client.views_open(trigger_id=body["trigger_id"], view=view)
+            logger.info(f"設定モーダル表示(v2.0): Workspace={workspace_id}, Groups={len(all_groups)}")
+        except Exception as e:
+            logger.error(f"設定モーダル表示失敗: {e}", exc_info=True)
+
+    # ==========================================
+    # 7. v2.0: グループ選択時の動的更新
+    # ==========================================
+    @app.action("group_select_action")
+    def handle_group_select_change(ack, body, client):
+        """
+        設定モーダルでグループ選択が変更された時の処理。
+        
+        選択されたグループのメンバーを表示するためにモーダルを動的更新します。
+        """
+        ack()
+        workspace_id = body["team"]["id"]
+        
+        try:
+            from resources.services.group_service import GroupService
+            from resources.services.workspace_service import WorkspaceService
+            
+            group_service = GroupService()
+            workspace_service = WorkspaceService()
+            
+            # 選択されたグループIDを取得
+            selected_value = body["actions"][0]["selected_option"]["value"]
+            
+            # 管理者IDを取得
+            admin_ids = workspace_service.get_admin_ids(workspace_id)
+            
+            # 全グループを取得
+            all_groups = group_service.get_all_groups(workspace_id)
+            
+            selected_group_id = None
+            selected_group_members = []
+            
+            if selected_value == "action_new_group":
+                # 新規グループを作成
+                new_group_id = group_service.create_group(
+                    workspace_id=workspace_id,
+                    name="新規グループ",
+                    member_ids=[],
+                    created_by=body["user"]["id"]
+                )
+                
+                # 全グループを再取得（新規グループを含む）
+                all_groups = group_service.get_all_groups(workspace_id)
+                
+                selected_group_id = new_group_id
+                selected_group_members = []
+                logger.info(f"新規グループ作成: {new_group_id}")
+            else:
+                # 既存グループを選択
+                selected_group = group_service.get_group_by_id(workspace_id, selected_value)
+                if selected_group:
+                    selected_group_id = selected_value
+                    selected_group_members = selected_group.get("member_ids", [])
+                    logger.info(f"グループ選択: {selected_group_id}, Members={len(selected_group_members)}")
+            
+            # モーダルを更新
+            updated_view = create_member_settings_modal_v2(
+                admin_ids=admin_ids,
+                all_groups=all_groups,
+                selected_group_id=selected_group_id,
+                selected_group_members=selected_group_members
+            )
+            
+            client.views_update(
+                view_id=body["view"]["id"],
+                hash=body["view"]["hash"],
+                view=updated_view
+            )
+            logger.info(f"モーダル更新成功: Workspace={workspace_id}")
+        except Exception as e:
+            logger.error(f"グループ選択処理失敗: {e}", exc_info=True)

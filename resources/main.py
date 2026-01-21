@@ -103,8 +103,11 @@ def slack_bot(request):
             
             logger.info(f"Target date for report: {today_str}")
             
+            # workspace_idの取得（環境変数から）
+            workspace_id = os.environ.get("SLACK_WORKSPACE_ID", "GLOBAL_WS")
+            
             # レポート送信処理の実行
-            notification_service.send_daily_report(today_str)
+            notification_service.send_daily_report(today_str, workspace_id)
             
             return "Daily report sent successfully", 200
             

@@ -126,17 +126,17 @@ class NotificationService:
             logger.error(f"チャンネル一覧取得失敗: {e}", exc_info=True)
             return []
 
-    def send_daily_report(self, date_str: str) -> None: 
+    def send_daily_report(self, date_str: str, workspace_id: str = None) -> None: 
         """
-        日次レポートをBotが参加している全チャンネルに送信します。
+        日次レポートを管理者に送信します（v2.0版）。
         
         Args:
             date_str: 対象日（YYYY-MM-DD形式）
+            workspace_id: Slackワークスペースの一意ID（省略時は環境変数から取得）
             
         Note:
-            - Botが参加しているチャンネルを動的に取得して送信
-            - 環境変数 REPORT_CHANNEL_ID があればそれを優先使用
-            - 各セクション（課）ごとに勤怠記録を集約して表示
+            v2.0では、グループ構造と管理者設定を使用してレポートを生成・送信します。
+            旧方式の固定セクション構造には対応していません。
         """
         if not self.attendance_service:
             logger.error("attendance_service が未設定のためレポート送信不可。")
@@ -144,21 +144,33 @@ class NotificationService:
 
         start_time = time.time()
         
-        # 1. 送信先の決定（環境変数 > 動的取得）
-        target_channels = []
+        # workspace_idの取得
+        if not workspace_id:
+            workspace_id = os.environ.get("SLACK_WORKSPACE_ID", "GLOBAL_WS")
+        
+        # 1. 管理者と送信先チャンネルの取得
+        from resources.services.workspace_service import WorkspaceService
+        workspace_service = WorkspaceService()
+        admin_ids = workspace_service.get_admin_ids(workspace_id)
+        
+        if not admin_ids:
+            logger.warning(f"管理者が設定されていません: Workspace={workspace_id}")
+            # 旧方式へのフォールバック（互換性のため）
+            self._send_daily_report_legacy(date_str, workspace_id)
+            return
+        
+        # 2. 送信先チャンネルの決定
         env_channel = os.environ.get("REPORT_CHANNEL_ID")
         if env_channel:
-            target_channels = [env_channel]
-            logger.info(f"レポート送信先（環境変数指定）: {env_channel}")
+            target_channel = env_channel
+            logger.info(f"レポート送信先（環境変数指定）: {target_channel}")
         else:
-            target_channels = self._get_bot_joined_channels()
-            logger.info(f"レポート送信先（動的取得）: {len(target_channels)}チャンネル")
-
-        if not target_channels:
-            logger.error("レポート送信先が見つかりません。Botをチャンネルに招待してください。")
-            return
-
-        # 2. 日付タイトルの準備
+            # デフォルトでは最初の管理者とのDMに送信
+            # （実際のプロダクションでは特定チャンネルに送信することを推奨）
+            target_channel = None  # DMの場合はNoneのまま
+            logger.info(f"レポート送信先: 管理者DM（{len(admin_ids)}人）")
+        
+        # 3. 日付タイトルの準備
         try:
             dt = datetime.date.fromisoformat(date_str)
         except:
@@ -168,18 +180,135 @@ class NotificationService:
         weekday_list = ["月", "火", "水", "木", "金", "土", "日"]
         title_date = f"{dt.strftime('%m/%d')}({weekday_list[dt.weekday()]})"
         
-        # 3. Firestoreからメンバー設定を取得
-        from resources.shared.db import get_channel_members_with_section
-        section_user_map, _ = get_channel_members_with_section()
+        # 4. グループ情報を取得
+        from resources.services.group_service import GroupService
+        group_service = GroupService()
+        all_groups = group_service.get_all_groups(workspace_id)
+        
+        if not all_groups:
+            logger.warning(f"グループが設定されていません: Workspace={workspace_id}")
+            # 旧方式へのフォールバック
+            self._send_daily_report_legacy(date_str, workspace_id)
+            return
+        
+        # 5. レポートブロックの構築
+        blocks = [{
+            "type": "header", 
+            "text": {"type": "plain_text", "text": f"{title_date}の勤怠一覧"}
+        }]
+        
+        for group in all_groups:
+            group_name = group.get("name", "不明なグループ")
+            member_ids = group.get("member_ids", [])
+            
+            blocks.append({"type": "divider"})
+            blocks.append({
+                "type": "section", 
+                "text": {"type": "mrkdwn", "text": f"*{group_name}*"}
+            })
+            
+            if not member_ids:
+                content_text = "_メンバーが登録されていません_"
+            else:
+                # 各メンバーの勤怠記録を取得
+                records = []
+                for user_id in member_ids:
+                    record = self.attendance_service.get_specific_date_record(
+                        workspace_id, user_id, date_str
+                    )
+                    if record:
+                        records.append(record)
+                
+                if not records:
+                    content_text = "_勤怠連絡はありません_"
+                else:
+                    # ステータスでソート
+                    records.sort(key=lambda x: x.get('status', ''))
+                    lines = [
+                        f"• <@{r['user_id']}> - *{STATUS_TRANSLATION.get(r['status'], r['status'])}*"
+                        f"{f' ({r['note']})' if r.get('note') else ''}" 
+                        for r in records
+                    ]
+                    content_text = "\n".join(lines)
+            
+            blocks.append({
+                "type": "context", 
+                "elements": [{"type": "mrkdwn", "text": content_text}]
+            })
+        
+        # 6. メッセージ送信
+        try:
+            if target_channel:
+                # チャンネルに送信
+                self.client.chat_postMessage(
+                    channel=target_channel, 
+                    blocks=blocks, 
+                    text=f"{title_date}の勤怠一覧"
+                )
+                logger.info(f"レポート送信成功（チャンネル）: {target_channel}")
+            else:
+                # 各管理者にDMで送信
+                for admin_id in admin_ids:
+                    try:
+                        # DMチャンネルを開く
+                        dm_response = self.client.conversations_open(users=admin_id)
+                        dm_channel = dm_response["channel"]["id"]
+                        
+                        # レポート送信
+                        self.client.chat_postMessage(
+                            channel=dm_channel, 
+                            blocks=blocks, 
+                            text=f"{title_date}の勤怠一覧"
+                        )
+                        logger.info(f"レポート送信成功（DM）: Admin={admin_id}")
+                    except Exception as e:
+                        logger.error(f"管理者 {admin_id} へのDM送信失敗: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"レポート送信失敗: {e}", exc_info=True)
+        
+        total_end = time.time()
+        logger.info(f"レポート送信処理完了 所要時間: {total_end - start_time:.4f}秒")
 
-        # 4. 各チャンネルに対してレポート生成と送信
+    def _send_daily_report_legacy(self, date_str: str, workspace_id: str) -> None:
+        """
+        日次レポートを旧方式で送信します（互換性のため）。
+        
+        Args:
+            date_str: 対象日（YYYY-MM-DD形式）
+            workspace_id: Slackワークスペースの一意ID
+            
+        Note:
+            v1.1以前の固定セクション構造を使用します。
+            v2.0のグループ設定が未完了の場合のフォールバック処理です。
+        """
+        logger.info("旧方式でレポートを送信します")
+        
+        # 送信先の決定
+        target_channels = []
+        env_channel = os.environ.get("REPORT_CHANNEL_ID")
+        if env_channel:
+            target_channels = [env_channel]
+        else:
+            target_channels = self._get_bot_joined_channels()
+
+        if not target_channels:
+            logger.error("レポート送信先が見つかりません。")
+            return
+
+        # 日付タイトルの準備
+        try:
+            dt = datetime.date.fromisoformat(date_str)
+        except:
+            dt = datetime.date.today()
+            
+        weekday_list = ["月", "火", "水", "木", "金", "土", "日"]
+        title_date = f"{dt.strftime('%m/%d')}({weekday_list[dt.weekday()]})"
+        
+        # 固定セクション構造
         all_sections = [
             ("sec_1", "1課"), ("sec_2", "2課"), ("sec_3", "3課"), ("sec_4", "4課"),
             ("sec_5", "5課"), ("sec_6", "6課"), ("sec_7", "7課"), ("sec_finance", "金融開発課")
         ]
-
-        # workspace_idの取得（環境変数または固定値）
-        workspace_id = os.environ.get("SLACK_WORKSPACE_ID", "GLOBAL_WS")
 
         for channel_id in target_channels:
             try:
@@ -205,7 +334,6 @@ class NotificationService:
                     if not records:
                         content_text = "_勤怠連絡はありません_"
                     else:
-                        # ステータスでソート
                         records.sort(key=lambda x: x.get('status', ''))
                         lines = [
                             f"• <@{r['user_id']}> - *{STATUS_TRANSLATION.get(r['status'], r['status'])}*"
@@ -225,10 +353,7 @@ class NotificationService:
                     blocks=blocks, 
                     text=f"{title_date}の勤怠一覧"
                 )
-                logger.info(f"Daily report sent successfully to {channel_id}")
+                logger.info(f"レポート送信成功（旧方式）: {channel_id}")
 
             except Exception as e:
-                logger.error(f"チャンネル {channel_id} へのレポート送信中にエラー: {e}", exc_info=True)
-
-        total_end = time.time()
-        logger.info(f"レポート送信処理完了 所要時間: {total_end - start_time:.4f}秒")
+                logger.error(f"チャンネル {channel_id} へのレポート送信失敗: {e}", exc_info=True)

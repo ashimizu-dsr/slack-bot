@@ -362,3 +362,165 @@ def create_error_modal(title: str, message: str):
         "close": {"type": "plain_text", "text": "閉じる"},
         "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": message}}]
     }
+
+# ==========================================
+# 6. v2.0 設定モーダル（動的グループ管理）
+# ==========================================
+def create_member_settings_modal_v2(
+    admin_ids: List[str],
+    all_groups: List[Dict[str, Any]],
+    selected_group_id: Optional[str] = None,
+    selected_group_members: List[str] = None
+) -> Dict[str, Any]:
+    """
+    v2.0の設定モーダルを生成します（動的グループ管理）。
+    
+    Args:
+        admin_ids: 現在の管理者のユーザーID配列
+        all_groups: 全グループ情報の配列
+            [{"group_id": "...", "name": "...", "member_ids": [...]}, ...]
+        selected_group_id: 現在選択されているグループID（初回はNone）
+        selected_group_members: 選択されているグループのメンバーID配列（初回は[]）
+        
+    Returns:
+        Slack モーダルビューの辞書
+        
+    Note:
+        - グループ選択のoptionsを動的に生成
+        - 最後に「➕ 新規グループを追加」を追加
+        - selected_group_idがある場合、そのグループを初期選択
+        - selected_group_membersをtarget_members_blockのinitial_usersに設定
+    """
+    if selected_group_members is None:
+        selected_group_members = []
+    
+    # グループ選択肢を生成
+    group_options = []
+    initial_group_option = None
+    
+    for group in all_groups:
+        option = {
+            "text": {"type": "plain_text", "text": group["name"]},
+            "value": group["group_id"]
+        }
+        group_options.append(option)
+        
+        # 初期選択されているグループを記録
+        if selected_group_id and group["group_id"] == selected_group_id:
+            initial_group_option = option
+    
+    # 「➕ 新規グループを追加」を最後に追加
+    group_options.append({
+        "text": {"type": "plain_text", "text": "➕ 新規グループを追加"},
+        "value": "action_new_group"
+    })
+    
+    # グループ選択要素の構築
+    group_element = {
+        "type": "static_select",
+        "placeholder": {
+            "type": "plain_text",
+            "text": "課を選択",
+            "emoji": True
+        },
+        "options": group_options,
+        "action_id": "group_select_action"
+    }
+    
+    # 初期選択がある場合は設定
+    if initial_group_option:
+        group_element["initial_option"] = initial_group_option
+    
+    # 所属者選択要素の構築
+    members_element = {
+        "type": "multi_users_select",
+        "placeholder": {
+            "type": "plain_text",
+            "text": "ユーザを選択（複数選択可）",
+            "emoji": True
+        },
+        "action_id": "target_members_select"
+    }
+    
+    # 選択されているメンバーがいる場合は設定
+    if selected_group_members:
+        members_element["initial_users"] = selected_group_members
+    
+    # モーダルの構築
+    return {
+        "type": "modal",
+        "callback_id": "member_settings_v2",
+        "title": {
+            "type": "plain_text",
+            "text": "9:00レポート設定",
+            "emoji": True
+        },
+        "submit": {
+            "type": "plain_text",
+            "text": "保存",
+            "emoji": True
+        },
+        "close": {
+            "type": "plain_text",
+            "text": "キャンセル",
+            "emoji": True
+        },
+        "blocks": [
+            {
+                "type": "input",
+                "block_id": "admin_users_block",
+                "element": {
+                    "type": "multi_users_select",
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": "ユーザを選択（複数選択可）",
+                        "emoji": True
+                    },
+                    "action_id": "admin_users_select",
+                    **({"initial_users": admin_ids} if admin_ids else {})
+                },
+                "label": {
+                    "type": "plain_text",
+                    "text": "管理者",
+                    "emoji": True
+                }
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": "ⓘ 管理者には、毎朝9:00に当日の勤怠連絡が通知されます。"
+                    }
+                ]
+            },
+            {
+                "type": "divider"
+            },
+            {
+                "type": "input",
+                "block_id": "group_selection_input_block",
+                "element": group_element,
+                "label": {
+                    "type": "plain_text",
+                    "text": "課",
+                    "emoji": True
+                },
+                "optional": True
+            },
+            {
+                "type": "input",
+                "block_id": "target_members_block",
+                "element": members_element,
+                "label": {
+                    "type": "plain_text",
+                    "text": "課の所属者",
+                    "emoji": True
+                },
+                "optional": True
+            }
+        ],
+        "private_metadata": json.dumps({
+            "selected_group_id": selected_group_id
+        })
+    }

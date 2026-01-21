@@ -124,3 +124,68 @@ def register_modal_handlers(app, attendance_service, notification_service) -> No
             else:
                 logger.error(f"メンバー設定保存失敗: {e}", exc_info=True)
                 ack()
+
+    # ==========================================
+    # 3. v2.0: 設定モーダル「保存」押下（動的グループ管理）
+    # ==========================================
+    @app.view("member_settings_v2")
+    def handle_member_settings_v2_save(ack, body, view):
+        """
+        v2.0設定モーダルの「保存」ボタン押下時の処理。
+        
+        管理者とグループメンバーを保存します。
+        """
+        workspace_id = body["team"]["id"]
+        metadata = json.loads(view.get("private_metadata", "{}"))
+        vals = view["state"]["values"]
+        
+        try:
+            from resources.services.group_service import GroupService
+            from resources.services.workspace_service import WorkspaceService
+            from resources.shared.errors import ValidationError
+            
+            group_service = GroupService()
+            workspace_service = WorkspaceService()
+            
+            # 1. 管理者IDを取得
+            admin_ids = vals["admin_users_block"]["admin_users_select"].get("selected_users", [])
+            
+            if not admin_ids:
+                # バリデーションエラー
+                ack(response_action="errors", errors={
+                    "admin_users_block": "⚠️ 少なくとも1人の管理者を選択してください。"
+                })
+                return
+            
+            # 2. グループIDとメンバーを取得
+            selected_group_id = metadata.get("selected_group_id")
+            
+            # グループが選択されている場合のみメンバーを更新
+            if selected_group_id and selected_group_id != "action_new_group":
+                # 所属者を取得
+                member_ids = vals.get("target_members_block", {}).get("target_members_select", {}).get("selected_users", [])
+                
+                # グループメンバーを更新
+                group_service.update_group_members(
+                    workspace_id=workspace_id,
+                    group_id=selected_group_id,
+                    member_ids=member_ids
+                )
+                logger.info(f"グループメンバー保存: GroupID={selected_group_id}, Members={len(member_ids)}")
+            
+            # 3. 管理者IDを保存
+            workspace_service.save_admin_ids(workspace_id, admin_ids)
+            logger.info(f"管理者保存: Workspace={workspace_id}, Admins={len(admin_ids)}")
+            
+            # 成功
+            ack()
+            logger.info(f"設定保存成功(v2.0): Workspace={workspace_id}")
+            
+        except ValidationError as ve:
+            logger.warning(f"バリデーションエラー: {ve}")
+            ack(response_action="errors", errors={
+                "admin_users_block": ve.user_message
+            })
+        except Exception as e:
+            logger.error(f"設定保存失敗(v2.0): {e}", exc_info=True)
+            ack()
