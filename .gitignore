@@ -7,4 +7,3 @@ __pycache__/
 *.py[cod]
 .venv/
 credentials.json
-__init__.py
