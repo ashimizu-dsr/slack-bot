@@ -1,5 +1,8 @@
 """
-Action Handlers - メッセージ上のボタン押下やグローバルショートカットの処理
+アクションハンドラー
+
+このモジュールは、メッセージ上のボタン押下やグローバルショートカットを処理します。
+勤怠カードの修正・取消ボタン、履歴表示ショートカットなどを担当します。
 """
 import datetime
 import logging
@@ -15,17 +18,29 @@ from resources.shared.db import (
     get_channel_members_with_section
 )
 
-# ロガーの統一
 logger = logging.getLogger(__name__)
 
+
 def register_action_handlers(app, attendance_service, notification_service) -> None:
+    """
+    アクション関連のハンドラーをSlack Appに登録します。
+    
+    Args:
+        app: Slack Bolt Appインスタンス
+        attendance_service: AttendanceServiceインスタンス
+        notification_service: NotificationServiceインスタンス
+    """
 
     # ==========================================
     # 1. 勤怠の「修正」ボタン押下
     # ==========================================
     @app.action("open_update_attendance")
     def handle_open_update_modal(ack, body, client):
-        """修正モーダルを表示する（不具合③対策：チェックロジックの適正化）"""
+        """
+        勤怠カードの「修正」ボタン押下時の処理。
+        
+        本人確認を行い、編集モーダルを表示します。
+        """
         ack()
         user_id = body["user"]["id"]
         workspace_id = body["team"]["id"]
@@ -45,6 +60,7 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                     user=user_id,
                     text="⚠️ この操作は打刻した本人しか行えません。"
                 )
+                logger.warning(f"権限エラー: User {user_id} が User {record.get('user_id')} の記録を編集しようとしました")
                 return
 
             private_metadata = json.dumps({
@@ -73,6 +89,11 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
     # ==========================================
     @app.action("delete_attendance_request")
     def open_delete_confirm_modal_handler(ack, body, client):
+        """
+        勤怠カードの「取消」ボタン押下時の処理。
+        
+        本人確認を行い、削除確認モーダルを表示します。
+        """
         ack()
         user_id = body["user"]["id"]
         workspace_id = body["team"]["id"]
@@ -83,7 +104,12 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
         try:
             record = get_single_attendance_record(workspace_id, user_id, date)
             if record and record.get("user_id") != user_id:
-                client.chat_postEphemeral(channel=channel_id, user=user_id, text="⚠️ 本人のみ取消可能です。")
+                client.chat_postEphemeral(
+                    channel=channel_id, 
+                    user=user_id, 
+                    text="⚠️ 本人のみ取消可能です。"
+                )
+                logger.warning(f"権限エラー: User {user_id} が User {record.get('user_id')} の記録を削除しようとしました")
                 return
 
             view = create_delete_confirm_modal(date) 
@@ -94,13 +120,18 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             })
             client.views_open(trigger_id=trigger_id, view=view)
         except Exception as e:
-            logger.error(f"取消モーダル表示失敗: {e}")
+            logger.error(f"取消モーダル表示失敗: {e}", exc_info=True)
 
     # ==========================================
     # 3. 削除確認モーダルの「送信」
     # ==========================================
     @app.view("delete_attendance_confirm_callback")
     def handle_delete_confirm_submit(ack, body, client, view):
+        """
+        削除確認モーダルの「削除する」ボタン押下時の処理。
+        
+        実際の削除を実行し、元のメッセージを更新します。
+        """
         ack()
         user_id = body["user"]["id"]
         workspace_id = body["team"]["id"]
@@ -111,17 +142,29 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             client.chat_update(
                 channel=metadata["channel_id"],
                 ts=metadata["message_ts"],
-                blocks=[{"type": "context", "elements": [{"type": "mrkdwn", "text": f"ⓘ <@{user_id}>さんの {metadata['date']} の勤怠連絡を取り消しました"}]}],
+                blocks=[{
+                    "type": "context", 
+                    "elements": [{
+                        "type": "mrkdwn", 
+                        "text": f"ⓘ <@{user_id}>さんの {metadata['date']} の勤怠連絡を取り消しました"
+                    }]
+                }],
                 text="勤怠を取り消しました"
             )
+            logger.info(f"削除成功: User={user_id}, Date={metadata['date']}")
         except Exception as e:
             logger.error(f"取消処理失敗: {e}", exc_info=True)
 
     # ==========================================
-    # 4. 勤怠履歴表示（不具合③：workspace_id不足の解消）
+    # 4. 勤怠履歴表示（グローバルショートカット）
     # ==========================================
     @app.shortcut("open_kintai_history")
     def handle_history_shortcut(ack, body, client):
+        """
+        グローバルショートカット「勤怠連絡の確認」の処理。
+        
+        ユーザー自身の勤怠履歴を月単位で表示します。
+        """
         ack()
         user_id = body["user"]["id"]
         workspace_id = body["team"]["id"] 
@@ -130,7 +173,7 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             today = datetime.date.today()
             month_str = today.strftime("%Y-%m")
             
-            # 引数に workspace_id を追加
+            # workspace_id を追加して履歴取得
             history = attendance_service.get_user_history(
                 workspace_id=workspace_id, 
                 user_id=user_id, 
@@ -144,15 +187,21 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                 user_id=user_id
             )
             client.views_open(trigger_id=body["trigger_id"], view=view)
+            logger.info(f"履歴表示: User={user_id}, Month={month_str}, Count={len(history)}")
         except Exception as e:
             logger.error(f"履歴表示失敗: {e}", exc_info=True)
 
     # ==========================================
-    # 5. 履歴モーダルの年月変更（不具合③対応）
+    # 5. 履歴モーダルの年月変更
     # ==========================================
     @app.action("history_year_change")
     @app.action("history_month_change")
     def handle_history_filter_update(ack, body, client):
+        """
+        履歴モーダル内の年月ドロップダウン変更時の処理。
+        
+        選択された年月で履歴を再取得し、モーダルをリアルタイム更新します。
+        """
         ack()
         workspace_id = body["team"]["id"]
         try:
@@ -178,6 +227,11 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                 user_id=target_user_id
             )
             
-            client.views_update(view_id=body["view"]["id"], hash=body["view"]["hash"], view=updated_view)
+            client.views_update(
+                view_id=body["view"]["id"], 
+                hash=body["view"]["hash"], 
+                view=updated_view
+            )
+            logger.info(f"履歴フィルタ更新: User={target_user_id}, Month={month_filter}, Count={len(history)}")
         except Exception as e:
             logger.error(f"履歴フィルタ更新失敗: {e}", exc_info=True)

@@ -1,5 +1,8 @@
 """
-NLP Service - AIによる勤怠情報の抽出
+自然言語処理サービス
+
+このモジュールは、OpenAI APIを使用してユーザーのメッセージから
+勤怠情報を抽出します。打ち消し線や複数日の記録にも対応しています。
 """
 import datetime
 import json
@@ -15,6 +18,7 @@ except ImportError:
 
 logger = setup_logger(__name__)
 
+# ステータスのエイリアス定義（正規化用）
 STATUS_ALIASES = {
     "late": {"late", "遅刻", "遅れ", "遅延"},
     "early_leave": {"early_leave", "早退"},
@@ -25,16 +29,39 @@ STATUS_ALIASES = {
 }
 
 def _normalize_status(value: str) -> str:
+    """
+    ステータス値を正規化します。
+    
+    Args:
+        value: AIが抽出したステータス値（日本語または英語）
+        
+    Returns:
+        正規化されたステータス値（late, early_leave, out, remote, vacation, other）
+        
+    Note:
+        エイリアスに該当しない場合は "other" を返します。
+    """
     val = str(value).lower()
     for canonical, aliases in STATUS_ALIASES.items():
         if val in aliases or any(a in val for a in aliases):
             return canonical
     return "other"
 
+
 def _format_note(att_data: Dict) -> str:
     """
-    AIが抽出した備考をそのまま返す。
-    余計な「勤怠連絡」や「出勤/退勤」の定型句は付与しない。
+    AIが抽出した備考を整形します。
+    
+    Args:
+        att_data: AIの抽出結果（"note"キーを含む辞書）
+        
+    Returns:
+        整形された備考文字列（空の場合は空文字列）
+        
+    Note:
+        現行仕様では、AIが抽出した備考をそのまま返します。
+        過去のバージョンでは「勤怠連絡」などの定型句を付与していましたが、
+        現在は削除されています。
     """
     ai_note = att_data.get("note")
     
@@ -45,23 +72,43 @@ def _format_note(att_data: Dict) -> str:
     return str(ai_note).strip()
 
 def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
+    """
+    テキストから勤怠情報をAIで抽出します。
+    
+    Args:
+        text: ユーザーが投稿したメッセージ
+        
+    Returns:
+        抽出結果の辞書:
+        {
+            "date": "YYYY-MM-DD",
+            "status": "late" など,
+            "note": "備考",
+            "action": "save" または "delete",
+            "_additional_attendances": [...] (複数日の場合)
+        }
+        抽出できない場合はNone
+        
+    Note:
+        - OpenAI API (gpt-4o-mini) を使用
+        - 打ち消し線 (~text~) は前処理で "(strike-through: text)" に変換
+        - 複数日の記録にも対応（_additional_attendances に格納）
+    """
     api_key = os.getenv("OPENAI_API_KEY")
     if not text or not api_key or not OpenAI:
+        logger.warning("AI抽出がスキップされました（API_KEYまたはテキストが空）")
         return None
 
-    # --- 修正点1: 破壊的な前処理をやめる (不具合②対策) ---
-    # 元のコードではコードブロックをタグに置換していましたが、
-    # AIは生のコードブロック形式の方が「データである」と認識しやすいです。
+    # 【打ち消し線の前処理】
+    # Slackの ~text~ 記法を AIが理解しやすい形式に変換
     clean_text = text
-    
-    # 打ち消し線のみ、AIが「削除対象」と誤解しないようヒントを与える程度に留める
     clean_text = re.sub(r'~(.*?)~', r'(strike-through: \1)', clean_text)
 
     client = OpenAI(api_key=api_key)
     base_date = datetime.date.today() 
     
     try:
-        # --- 修正点2: プロンプトの簡略化と指示の明確化 (不具合①・②対策) ---
+        # システム指示の定義
         system_instruction = (
             "You are a professional attendance data extractor. Analyze the user's message and output JSON.\n"
             "Format: { \"is_attendance\": bool, \"attendances\": [{ \"date\": \"YYYY-MM-DD\", \"status\": \"string\", \"start_time\": \"HH:mm\", \"end_time\": \"HH:mm\", \"note\": \"string\", \"action\": \"save\" | \"delete\" }] }\n\n"
@@ -74,6 +121,7 @@ def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
             "4. Today: Use the provided date to infer the year."
         )
 
+        # API呼び出し
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -85,14 +133,17 @@ def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
         )
 
         data = json.loads(response.choices[0].message.content)
-        # 修正ポイント: is_attendanceがFalseでも、attendancesがあれば拾う（AIの判定漏れ対策）
+        
+        # attendancesが存在しない場合は抽出失敗
         if not data.get("attendances"):
+            logger.info("AI抽出結果: 勤怠情報なし")
             return None
 
         attendances = data["attendances"]
         
         def format_result(att):
-            # AIが返してきた日付をそのまま使い、なければ今日を補完
+            """抽出結果を整形する内部関数"""
+            # 日付の補完（AIが返さなかった場合は今日を使用）
             target_date = att.get("date")
             if not target_date or len(target_date) < 10:
                 target_date = base_date.isoformat()
@@ -104,19 +155,20 @@ def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
                 "action": att.get("action", "save")
             }
 
-        # 抽出された全データを整形
+        # 全てのデータを整形
         results = [format_result(a) for a in attendances]
         
         if not results:
             return None
 
-        # 返却形式の維持（1件目をベースにし、2件目以降を _additional_attendances に入れる）
+        # 返却形式: 1件目をベースにし、2件目以降を _additional_attendances に入れる
         final_result = results[0]
         if len(results) > 1:
             final_result["_additional_attendances"] = results[1:]
 
+        logger.info(f"AI抽出成功: {len(results)}件の勤怠情報を抽出")
         return final_result
 
     except Exception as e:
-        logger.error(f"AI Extraction Error: {e}")
+        logger.error(f"AI Extraction Error: {e}", exc_info=True)
         return None

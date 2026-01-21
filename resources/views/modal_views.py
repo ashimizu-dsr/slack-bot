@@ -1,5 +1,8 @@
 """
-Modal & Message Views - Slack UIの構築に専念する
+Slack UI（Block Kit）ビュー構築モジュール
+
+このモジュールは、Slackのモーダル、メッセージカード、アクションボタンなどの
+Block Kit JSONを生成します。ビジネスロジックは含まず、純粋にUI構造のみを担当します。
 """
 import datetime
 import json
@@ -10,6 +13,20 @@ from constants import STATUS_TRANSLATION, SECTION_TRANSLATION
 # 1. 勤怠入力/編集モーダル
 # ==========================================
 def create_attendance_modal_view(initial_data: Optional[Dict] = None, **kwargs) -> Dict[str, Any]:
+    """
+    勤怠入力または編集用のモーダルを生成します。
+    
+    Args:
+        initial_data: 既存データ（編集モードの場合に指定）
+            - date: 日付（YYYY-MM-DD形式）
+            - status: ステータス（late, vacation など）
+            - note: 備考
+        **kwargs: 追加オプション
+            - is_fixed_date: Trueの場合、日付を変更不可にする
+            
+    Returns:
+        Slack モーダルビューの辞書
+    """
     is_fixed_date = kwargs.get("is_fixed_date", False)
     
     today = datetime.date.today().isoformat() 
@@ -89,8 +106,16 @@ def create_attendance_modal_view(initial_data: Optional[Dict] = None, **kwargs) 
 # ==========================================
 def create_history_modal_view(history_records: List[Dict], selected_year: str, selected_month: str, user_id: str) -> Dict[str, Any]:
     """
-    不具合①対策: private_metadata に user_id を追加。
-    これにより年月変更時に「誰の履歴を再取得するか」をプログラムが判別可能になります。
+    ユーザーの勤怠履歴を表示するモーダルを生成します。
+    
+    Args:
+        history_records: 勤怠記録の配列
+        selected_year: 選択されている年（文字列）
+        selected_month: 選択されている月（"01"〜"12"）
+        user_id: 対象ユーザーのID（private_metadataに保存、年月変更時に使用）
+        
+    Returns:
+        Slack モーダルビューの辞書
     """
     year_options = [{"text": {"type": "plain_text", "text": f"{y}年"}, "value": str(y)} for y in range(2025, 2036)]
     month_options = [{"text": {"type": "plain_text", "text": f"{m}月"}, "value": f"{m:02d}"} for m in range(1, 13)]
@@ -138,6 +163,19 @@ def create_history_modal_view(history_records: List[Dict], selected_year: str, s
 # 3. メンバー一括設定モーダル
 # ==========================================
 def create_member_settings_modal_view(channel_id: str, **kwargs) -> Dict[str, Any]:
+    """
+    課別メンバー設定用のモーダルを生成します。
+    
+    Args:
+        channel_id: 対象チャンネルID（将来の拡張用、現状は未使用）
+        **kwargs: 追加オプション
+        
+    Returns:
+        Slack モーダルビューの辞書
+        
+    Note:
+        全8セクション（1課〜7課、金融開発課）のユーザー選択肢を含みます。
+    """
     from resources.shared.db import get_channel_members_with_section
     
     result = get_channel_members_with_section()
@@ -177,6 +215,16 @@ def create_member_settings_modal_view(channel_id: str, **kwargs) -> Dict[str, An
 # 4. レポート & セットアップ
 # ==========================================
 def build_daily_report_blocks(header: str, section_data: dict):
+    """
+    日次レポート用のBlock Kitブロックを生成します。
+    
+    Args:
+        header: レポートのヘッダーテキスト（例: "01/21(水)の勤怠一覧"）
+        section_data: {セクション名: [勤怠記録配列]}
+        
+    Returns:
+        Slack Block Kitブロックの配列
+    """
     blocks = [
         {"type": "header", "text": {"type": "plain_text", "text": header}},
         {"type": "divider"}
@@ -200,7 +248,12 @@ def build_daily_report_blocks(header: str, section_data: dict):
     return blocks
 
 def create_setup_message_blocks():
-    """管理開始時のセットアップ用メッセージ"""
+    """
+    Botがチャンネルに参加した際のセットアップメッセージを生成します。
+    
+    Returns:
+        Slack Block Kitブロックの配列
+    """
     return [
         {
             "type": "context",
@@ -225,7 +278,20 @@ def create_setup_message_blocks():
     ]
 
 def create_attendance_card_blocks(record: Any, **kwargs) -> List[Dict[str, Any]]:
+    """
+    勤怠記録カード（通知用）のBlock Kitブロックを生成します。
+    
+    Args:
+        record: AttendanceRecordオブジェクトまたは辞書
+        **kwargs: 追加オプション
+            - is_update: 更新通知の場合True
+            - show_buttons: ボタンを表示する場合True
+            
+    Returns:
+        Slack Block Kitブロックの配列
+    """
     def get_val(obj, key):
+        """オブジェクトまたは辞書から値を取得する内部関数"""
         return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
 
     user_id = get_val(record, 'user_id')
@@ -260,6 +326,15 @@ def create_attendance_card_blocks(record: Any, **kwargs) -> List[Dict[str, Any]]
 # 5. エラー & 削除確認
 # ==========================================
 def create_delete_confirm_modal(date: str):
+    """
+    勤怠記録削除の確認モーダルを生成します。
+    
+    Args:
+        date: 削除対象の日付（YYYY-MM-DD形式）
+        
+    Returns:
+        Slack モーダルビューの辞書
+    """
     return {
         "type": "modal",
         "callback_id": "delete_attendance_confirm_callback",
@@ -271,7 +346,16 @@ def create_delete_confirm_modal(date: str):
     }
 
 def create_error_modal(title: str, message: str):
-    """不具合④対策: エラー通知用汎用モーダル"""
+    """
+    エラー通知用の汎用モーダルを生成します。
+    
+    Args:
+        title: モーダルのタイトル
+        message: エラーメッセージ（Markdown対応）
+        
+    Returns:
+        Slack モーダルビューの辞書
+    """
     return {
         "type": "modal",
         "title": {"type": "plain_text", "text": title},

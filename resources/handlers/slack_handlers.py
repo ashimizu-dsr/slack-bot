@@ -1,22 +1,37 @@
 """
-Slack Event Handlers - 修正版
+Slackイベントハンドラー
+
+このモジュールは、Slackからのイベント（メッセージ受信、Bot参加など）を処理します。
+メッセージからのAI解析による勤怠記録の自動登録を担当します。
 """
 import logging
 from typing import Optional
-# nlp_service から新しく extract_attendance_from_text を読み込む
 from resources.services.nlp_service import extract_attendance_from_text 
 from resources.views.modal_views import create_setup_message_blocks
 from resources.shared.utils import get_user_email
 
 logger = logging.getLogger(__name__)
 
+# 処理済みメッセージのタイムスタンプを記録（重複防止用）
 _processed_message_ts = set()
 
 def _is_likely_attendance_message(text: str) -> bool:
-    if not text: return False
-    # 【不具合①対策】判定を緩和。
-    # 「1/21(水) ~8:00出勤~」のようなメッセージは
-    # 挨拶リストに含まれないため、以下のロジックで通過するようにします。
+    """
+    メッセージが勤怠連絡かどうかを簡易判定します。
+    
+    Args:
+        text: メッセージ本文
+        
+    Returns:
+        勤怠連絡の可能性がある場合True
+        
+    Note:
+        定型の挨拶文のみのメッセージを除外します。
+        最終的な判定はAIが行うため、ここでは緩い判定でOKです。
+    """
+    if not text:
+        return False
+        
     text_stripped = text.strip()
     boring_messages = [
         "承知しました", "了解です", "ありがとうございます", 
@@ -26,39 +41,82 @@ def _is_likely_attendance_message(text: str) -> bool:
     return text_stripped not in boring_messages
 
 def should_process_message(event) -> bool:
+    """
+    メッセージを処理すべきかどうかを判定します。
+    
+    Args:
+        event: Slackメッセージイベント
+        
+    Returns:
+        処理対象の場合True
+        
+    Note:
+        以下の条件で除外されます:
+        - Bot自身のメッセージ
+        - サブタイプがあるメッセージ（編集、削除など）
+        - NLPが無効化されている
+        - 指定チャンネル以外（環境変数でチャンネルIDが設定されている場合）
+        - 既に処理済みの通知メッセージ
+    """
     user_id = event.get("user")
     text = (event.get("text") or "").strip()
     channel = event.get("channel")
 
+    # 基本的な除外条件
     if event.get("subtype") or event.get("bot_id") or not user_id or not text:
         return False
     
-    # NLPが無効、または指定チャンネル以外なら無視
+    # NLP機能の有効/無効チェック
     from constants import ENABLE_CHANNEL_NLP, ATTENDANCE_CHANNEL_ID
-    if not ENABLE_CHANNEL_NLP: return False
-    if ATTENDANCE_CHANNEL_ID and channel != ATTENDANCE_CHANNEL_ID: return False
+    if not ENABLE_CHANNEL_NLP:
+        return False
+        
+    # 指定チャンネルのみに制限（環境変数で設定されている場合）
+    if ATTENDANCE_CHANNEL_ID and channel != ATTENDANCE_CHANNEL_ID:
+        return False
     
-    # 自分が送った「記録済み」メッセージに反応しないようにする
-    if text.startswith(("勤怠連絡:", "✅", "ⓘ")): return False
-    if not _is_likely_attendance_message(text): return False
+    # Bot自身が送った通知メッセージを除外
+    if text.startswith(("勤怠連絡:", "✅", "ⓘ")):
+        return False
+        
+    # 挨拶のみのメッセージを除外
+    if not _is_likely_attendance_message(text):
+        return False
     
     return True
 
 def process_attendance_core(event, client, attendance_service, notification_service):
+    """
+    メッセージからAI解析を実行し、勤怠記録を保存します。
+    
+    Args:
+        event: Slackメッセージイベント
+        client: Slack Web APIクライアント
+        attendance_service: AttendanceServiceインスタンス
+        notification_service: NotificationServiceインスタンス
+        
+    Note:
+        処理フロー:
+        1. AI解析でメッセージから勤怠情報を抽出
+        2. 抽出結果をAttendanceServiceで処理（保存/削除）
+        3. NotificationServiceで通知カードを送信
+    """
     user_id = event.get("user")
     workspace_id = event.get("team")
     ts = event.get("ts")
     channel = event.get("channel")
     text = (event.get("text") or "").strip()
 
+    # 重複処理の防止
     msg_key = f"{channel}:{ts}"
-    if msg_key in _processed_message_ts: return
+    if msg_key in _processed_message_ts:
+        return
     _processed_message_ts.add(msg_key)
 
     try:
         email: Optional[str] = get_user_email(client, user_id, logger)
         
-        # 1. AI解析実行 (nlp_serviceの修正版が反映されている前提)
+        # 1. AI解析実行
         extraction = extract_attendance_from_text(text)
         
         if not extraction:
@@ -68,9 +126,10 @@ def process_attendance_core(event, client, attendance_service, notification_serv
         # 処理開始のリアクション
         try:
             client.reactions_add(channel=channel, name="outbox_tray", timestamp=ts)
-        except Exception: pass
+        except Exception:
+            pass
 
-        # 2. リスト化（複数日対応）
+        # 2. 抽出結果をリスト化（複数日対応）
         attendances = [extraction]
         if "_additional_attendances" in extraction:
             attendances.extend(extraction["_additional_attendances"])
@@ -80,11 +139,11 @@ def process_attendance_core(event, client, attendance_service, notification_serv
             date = att.get("date")
             action = att.get("action", "save")
 
-            # A. 削除アクション (打ち消し線のみの場合など)
+            # A. 削除アクション（打ち消し線のみの場合など）
             if action == "delete":
                 try:
                     attendance_service.delete_attendance(workspace_id, user_id, date)
-                    # 通知
+                    # 削除通知
                     notification_service.notify_attendance_change(
                         record={"user_id": user_id, "date": date},
                         channel=channel,
@@ -96,30 +155,45 @@ def process_attendance_core(event, client, attendance_service, notification_serv
                 continue
 
             # B. 保存・更新アクション
-            # record は保存された結果のオブジェクト（または辞書）
             record = attendance_service.save_attendance(
-                workspace_id=workspace_id, user_id=user_id, email=email,
-                date=date, status=att.get("status"), note=att.get("note", ""), 
-                channel_id=channel, ts=ts
+                workspace_id=workspace_id, 
+                user_id=user_id, 
+                email=email,
+                date=date, 
+                status=att.get("status"), 
+                note=att.get("note", ""), 
+                channel_id=channel, 
+                ts=ts
             )
             
-            # 【重要】通知サービスの呼び出し
-            # 引数を NotificationService の notify_attendance_change の定義に合わせます
+            # 通知カードの送信
             notification_service.notify_attendance_change(
                 record=record, 
                 channel=channel, 
                 thread_ts=ts,
-                is_update=False # 保存したてなのでFalse
+                is_update=False
             )
             
     except Exception as e:
         logger.error(f"解析・保存エラー: {e}", exc_info=True)
 
 def register_slack_handlers(app, attendance_service, notification_service) -> None:
-    """ハンドラーの登録"""
+    """
+    Slackイベント関連のハンドラーをSlack Appに登録します。
+    
+    Args:
+        app: Slack Bolt Appインスタンス
+        attendance_service: AttendanceServiceインスタンス
+        notification_service: NotificationServiceインスタンス
+    """
 
     @app.event("member_joined_channel")
     def handle_bot_join(event, client):
+        """
+        Botがチャンネルに参加したときの処理。
+        
+        セットアップメッセージを投稿します。
+        """
         try:
             bot_user_id = client.auth_test()["user_id"]
             if event.get("user") == bot_user_id:
@@ -128,14 +202,18 @@ def register_slack_handlers(app, attendance_service, notification_service) -> No
                     blocks=create_setup_message_blocks(),
                     text="勤怠管理ボットが参加しました。設定をお願いします。"
                 )
+                logger.info(f"Bot参加: Channel={event.get('channel')}")
         except Exception as e:
-            logger.error(f"初期設定送信エラー: {e}")
+            logger.error(f"初期設定送信エラー: {e}", exc_info=True)
 
     @app.event("message")
     def handle_incoming_message(event, client, ack):
         """
-        メッセージ受信ハンドラー
-        Cloud Runでは lazy を使わず、ack() の後に直接処理を書く
+        メッセージ受信ハンドラー。
+        
+        Note:
+            Cloud Runでは lazy リスナーを使わず、ack() の後に直接処理を書きます。
+            --no-cpu-throttling 設定により、ack後も処理が継続されます。
         """
         # 1. まず Slack に 200 OK を返す（3秒ルール回避）
         ack()
@@ -145,7 +223,6 @@ def register_slack_handlers(app, attendance_service, notification_service) -> No
             return
 
         # 3. そのまま重い処理（AI解析）を実行
-        # Cloud Runの --no-cpu-throttling 設定により、ack後も処理が継続されます
         process_attendance_core(
             event=event, 
             client=client, 

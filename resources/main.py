@@ -1,3 +1,10 @@
+"""
+Slack勤怠管理Bot - メインエントリポイント
+
+このモジュールは、Google Cloud Run/Functions上で動作するSlack Botの
+エントリポイントです。HTTPリクエストを受け取り、Slackイベントまたは
+Cloud Schedulerからのジョブリクエストを処理します。
+"""
 import sys
 import os
 import datetime
@@ -14,9 +21,10 @@ if parent_dir not in sys.path:
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-# loggerのセットアップ
+# ロガーのセットアップ
 logger = logging.getLogger(__name__)
 
+# Slack Bolt のインポート
 try:
     from slack_bolt import App
     from slack_bolt.adapter.google_cloud_functions import SlackRequestHandler
@@ -31,13 +39,15 @@ from resources.services.attendance_service import AttendanceService
 from resources.services.notification_service import NotificationService
 from resources.handlers import register_all_handlers 
 
-# --- 初期化 ---
+# ==========================================
+# 初期化
+# ==========================================
 
 # 1. ログとDBの準備（起動時に1回だけ実行される）
 setup_logger()
 init_db()
 
-print("Starting slack_bot application...")
+print("Starting slack_bot application...", file=sys.stderr)
 
 # 2. Slackアプリの準備
 app = App(
@@ -56,11 +66,24 @@ register_all_handlers(app, attendance_service, notification_service)
 # 5. Google Cloud Functions/Run 用のハンドラー
 handler = SlackRequestHandler(app)
 
-# --- エントリポイント ---
+# ==========================================
+# エントリポイント
+# ==========================================
 
 def slack_bot(request):
     """
-    HTTPリクエストを受け取り、パスに応じてSlack処理か定期ジョブかを分岐させる
+    HTTPリクエストを受け取り、パスに応じてSlack処理か定期ジョブかを分岐させます。
+    
+    Args:
+        request: Google Cloud RunのHTTPリクエストオブジェクト
+        
+    Returns:
+        タプル: (レスポンスボディ, HTTPステータスコード)
+        
+    Note:
+        パスによる分岐:
+        - "/job/report": Cloud Schedulerからの日次レポート実行リクエスト
+        - それ以外: Slackイベント（メッセージ、ボタン、ショートカットなど）
     """
     
     # パスの取得（Cloud RunのURL末尾）
@@ -69,16 +92,14 @@ def slack_bot(request):
     # 1. Cloud Schedulerからのレポート実行リクエスト
     # Schedulerの設定で URL を https://[YOUR-URL]/job/report に設定してください
     if path == "/job/report":
-        logger.info("Cloud Scheduler triggered: Starting 9:00 AM report...")
+        logger.info("Cloud Scheduler triggered: Starting daily report...")
         
         try:
             # 日本時間 (JST) の日付を取得
             # Cloud Runのシステム時間はUTCのため、+9時間して日付を確定させる
-            # now_jst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
             from datetime import timezone, timedelta
             JST = timezone(timedelta(hours=9))
             today_str = datetime.datetime.now(JST).date().isoformat()
-            # today_str = now_jst.date().isoformat()
             
             logger.info(f"Target date for report: {today_str}")
             
