@@ -29,7 +29,7 @@ def init_db():
 def save_attendance_record(workspace_id, user_id, email, date, status, note, channel_id, ts):
     """勤怠レコードの保存または更新"""
     try:
-        # ドキュメントIDを「ワークスペース_ユーザー_日付」で固定し、1日1レコードを保証
+        # IDをワークスペース単位で分離
         doc_id = f"{workspace_id}_{user_id}_{date}"
         doc_ref = db.collection("attendance").document(doc_id)
         
@@ -42,10 +42,10 @@ def save_attendance_record(workspace_id, user_id, email, date, status, note, cha
             "note": note,
             "channel_id": channel_id,
             "ts": ts,
-            "updated_at": firestore.SERVER_TIMESTAMP # Google側のサーバー時刻
+            "updated_at": firestore.SERVER_TIMESTAMP
         }
         doc_ref.set(data)
-        logger.info(f"Saved attendance: {user_id} on {date} status={status}")
+        logger.info(f"Saved attendance: {doc_id}")
     except Exception as e:
         logger.error(f"Error saving attendance record: {e}")
         raise
@@ -62,19 +62,19 @@ def get_single_attendance_record(workspace_id, user_id, date):
         logger.error(f"Error fetching single record: {e}")
         return None
 
-def get_user_history_from_db(user_id: str, email: Optional[str], month_filter: str) -> List[Dict[str, Any]]:
-    """ユーザーの月間履歴を取得"""
+def get_user_history_from_db(workspace_id: str, user_id: str, email: Optional[str], month_filter: str) -> List[Dict[str, Any]]:
+    """【修正】workspace_id を含めて履歴を取得"""
     try:
-        query = db.collection("attendance")
-        # emailがある場合は優先して検索（名寄せ対応）
+        # まず workspace_id でフィルタリングを開始する
+        query = db.collection("attendance").where("workspace_id", "==", workspace_id)
+        
         if email:
             docs = query.where("email", "==", email).stream()
         else:
             docs = query.where("user_id", "==", user_id).stream()
         
         results = [d.to_dict() for d in docs]
-        # 月フィルター(YYYY-MM)に合致するものを抽出してソート
-        filtered = [r for r in results if r['date'].startswith(month_filter)]
+        filtered = [r for r in results if r.get('date', '').startswith(month_filter)]
         return sorted(filtered, key=lambda x: x['date'], reverse=True)
     except Exception as e:
         logger.error(f"Error fetching user history: {e}")
@@ -85,7 +85,6 @@ def delete_attendance_record_db(workspace_id, user_id, date):
     try:
         doc_id = f"{workspace_id}_{user_id}_{date}"
         db.collection("attendance").document(doc_id).delete()
-        logger.info(f"Deleted record: {doc_id}")
     except Exception as e:
         logger.error(f"Error deleting record: {e}")
 
@@ -117,31 +116,31 @@ def save_channel_members_db(workspace_id, channel_id, section_user_map, client_v
     except Exception as e:
         logger.error(f"Error saving channel members: {e}")
 
-def get_today_records(date_str: Optional[str] = None) -> List[Dict[str, Any]]:
-    """指定日（デフォルト今日）の全記録取得"""
+def get_today_records(workspace_id: str, date_str: Optional[str] = None) -> List[Dict[str, Any]]:
+    """【修正】workspace_id を含めて今日の記録を取得"""
     try:
         target_date = date_str or datetime.datetime.now().strftime("%Y-%m-%d")
-        docs = db.collection("attendance").where("date", "==", target_date).stream()
+        # 会社を跨いでデータが混ざらないよう、workspace_id で絞り込む
+        docs = db.collection("attendance")\
+                 .where("workspace_id", "==", workspace_id)\
+                 .where("date", "==", target_date).stream()
         return [d.to_dict() for d in docs]
     except Exception as e:
         logger.error(f"Error fetching today's records: {e}")
         return []
 
-def get_attendance_records_by_sections(target_date: str, section_ids: List[str]) -> List[Dict[str, Any]]:
-    """指定セクションのメンバー分をまとめて取得"""
+def get_attendance_records_by_sections(workspace_id: str, target_date: str, section_ids: List[str]) -> List[Dict[str, Any]]:
+    """【修正】workspace_id を含めてセクション毎の記録を取得"""
     try:
-        # 1. メンバーリストを共有設定から取得
-        section_map, _ = get_channel_members_with_section()
+        section_map, _ = get_channel_members_with_section() # ここも本来は workspace ごとに管理すべきですが一旦現状維持
         member_ids = []
         for s_id in section_ids:
             member_ids.extend(section_map.get(s_id, []))
         
-        if not member_ids:
-            return []
+        if not member_ids: return []
 
-        # 2. FirestoreのINクエリ（1回30件まで）で取得
-        # ※大量にいる場合はチャンク分けが必要ですが、1課あたり30人以内ならこれでOK
         docs = db.collection("attendance")\
+                 .where("workspace_id", "==", workspace_id)\
                  .where("date", "==", target_date)\
                  .where("user_id", "in", member_ids[:30])\
                  .stream()

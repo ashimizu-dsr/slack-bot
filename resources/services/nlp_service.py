@@ -32,19 +32,17 @@ def _normalize_status(value: str) -> str:
     return "other"
 
 def _format_note(att_data: Dict) -> str:
-    parts = []
+    """
+    AIが抽出した備考をそのまま返す。
+    余計な「勤怠連絡」や「出勤/退勤」の定型句は付与しない。
+    """
     ai_note = att_data.get("note")
     
-    # AIが具体的な備考を出してきたら、それを最優先で使う
-    if ai_note and str(ai_note).lower() not in ["none", "null", "勤怠連絡"]:
-        parts.append(str(ai_note))
+    # AIが "None", "null" と返してきた場合や、空の場合は空文字を返す
+    if not ai_note or str(ai_note).lower() in ["none", "null"]:
+        return ""
     
-    # 時間情報は、備考とは別に補足として追加する
-    if att_data.get("start_time"): parts.append(f"{att_data['start_time']}出勤")
-    if att_data.get("end_time"):   parts.append(f"{att_data['end_time']}退勤")
-    
-    # AIのnoteも時間も何もない場合のみ、デフォルトの文字を出す
-    return " / ".join(parts) if parts else "勤怠連絡"
+    return str(ai_note).strip()
 
 def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
     api_key = os.getenv("OPENAI_API_KEY")
@@ -68,12 +66,12 @@ def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
             "You are a professional attendance data extractor. Analyze the user's message and output JSON.\n"
             "Format: { \"is_attendance\": bool, \"attendances\": [{ \"date\": \"YYYY-MM-DD\", \"status\": \"string\", \"start_time\": \"HH:mm\", \"end_time\": \"HH:mm\", \"note\": \"string\", \"action\": \"save\" | \"delete\" }] }\n\n"
             "Rules:\n"
-            "1. Status Mapping: '年休','休み','休暇'->'vacation', '外出','直行','情報センター'->'out', '在宅'->'remote', '遅刻'->'late', '早退'->'early_leave'.\n"
-            "2. Note: Extract specific locations or reasons. If '~A~ -> B' exists, set note to '(予定変更) B'.\n"
-            "3. Code Blocks: Treat text inside ``` as official data to extract.\n"
-            "4. Strike-through: (strike-through: A) means A is canceled. If followed by new info, extract that as 'save'.\n"
-            "5. If a whole day is canceled without new info, set action to 'delete'.\n"
-            "6. Use Today's date to infer the year for dates like '1/30'."
+            "1. Status: '年休','休暇'->'vacation', '外出','情報センター'->'out', '在宅'->'remote', '遅刻'->'late', '早退'->'early_leave'.\n"
+            "2. Note: Use this for specific locations, reasons, or specific times mentioned (e.g., '8:00出勤', '終日情報センター').\n"
+            "   - If no specific info is provided beyond the status, leave 'note' empty (\"\").\n"
+            "   - For changes like '~A~ -> B', set note to '(予定変更) B'.\n"
+            "3. Code Blocks: Extract text inside ``` as official data.\n"
+            "4. Today: Use the provided date to infer the year."
         )
 
         response = client.chat.completions.create(
