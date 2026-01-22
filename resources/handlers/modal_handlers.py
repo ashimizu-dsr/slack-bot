@@ -318,7 +318,8 @@ def register_modal_handlers(app, attendance_service, notification_service) -> No
             
             # 2. モーダルから全グループを取得
             group_count = metadata.get("group_count", 1)
-            modal_groups = _extract_groups_from_modal(vals, group_count)
+            existing_groups_data = metadata.get("groups_data", [])
+            modal_groups = _extract_groups_from_modal(vals, group_count, existing_groups_data)
             
             # 3. バリデーション
             validation_errors = _validate_modal_input(admin_ids, modal_groups, group_count)
@@ -364,23 +365,26 @@ def register_modal_handlers(app, attendance_service, notification_service) -> No
 # v2.2用ヘルパー関数
 # ==========================================
 
-def _extract_groups_from_modal(state_values, group_count):
+def _extract_groups_from_modal(state_values, group_count, existing_groups_data=None):
     """
     モーダルの入力値から全グループを抽出します（v2.2）。
     
     Args:
         state_values: モーダルのstate.values
         group_count: グループ数
+        existing_groups_data: metadataから取得した既存グループデータ（group_id含む）
         
     Returns:
         グループ配列（空のグループは除外）
-        [{"name": "営業1課", "member_ids": ["U001"]}, ...]
+        [{"group_id": "group_xxx", "name": "営業1課", "member_ids": ["U001"]}, ...]
         
     Note:
         - グループ名が空の場合はスキップ
-        - グループ名はsanitize_group_name()でサニタイズ
+        - 既存グループの場合はgroup_idを保持（更新用）
+        - 新規グループの場合はgroup_idはNone（作成用）
     """
-    from resources.shared.utils import sanitize_group_name
+    if existing_groups_data is None:
+        existing_groups_data = []
     
     groups = []
     
@@ -397,14 +401,14 @@ def _extract_groups_from_modal(state_values, group_count):
         if not name:
             continue
         
-        # グループ名のサニタイズ
-        sanitized_name = sanitize_group_name(name)
-        
-        if not sanitized_name:
-            continue
+        # 既存グループのgroup_idを取得（存在する場合）
+        group_id = None
+        if i <= len(existing_groups_data):
+            group_id = existing_groups_data[i - 1].get("group_id")
         
         groups.append({
-            "name": sanitized_name,
+            "group_id": group_id,  # 既存グループの場合はUUID、新規の場合はNone
+            "name": name,
             "member_ids": member_ids
         })
     
@@ -458,40 +462,47 @@ def _validate_modal_input(admin_ids, modal_groups, group_count):
 
 def _calculate_diff(modal_groups, existing_groups):
     """
-    モーダルとFirestoreの差分を計算します（v2.2）。
+    モーダルとFirestoreの差分を計算します（v2.2 - UUID方式）。
     
     Args:
         modal_groups: モーダルから取得したグループ配列
+            [{"group_id": "group_xxx" or None, "name": "営業1課", "member_ids": [...]}, ...]
         existing_groups: Firestoreから取得した既存グループ配列
+            [{"group_id": "group_xxx", "name": "営業1課", "member_ids": [...]}, ...]
         
     Returns:
         差分辞書
         {
-            "to_create": {"営業2課"},  # 新規作成
-            "to_update": {"営業1課"},  # 更新
-            "to_delete": {"開発課"}    # 削除
+            "to_create": [{"name": "営業2課", "member_ids": [...]}],  # 新規作成
+            "to_update": [{"group_id": "group_xxx", "name": "営業1課", "member_ids": [...]}],  # 更新
+            "to_delete": ["group_abc", "group_def"]  # 削除（group_idのリスト）
         }
     """
-    modal_names = {g["name"] for g in modal_groups}
+    # モーダルのgroup_idセット（既存グループのみ）
+    modal_group_ids = {g["group_id"] for g in modal_groups if g.get("group_id")}
     
-    # 既存グループのgroup_idを取得（v2.1のUUID形式とv2.2のname形式が混在する可能性）
-    existing_names = set()
-    for g in existing_groups:
-        # group_idを優先、なければnameを使用
-        group_id = g.get("group_id", g.get("name"))
-        if group_id:
-            existing_names.add(group_id)
+    # Firestoreのgroup_idセット
+    existing_group_ids = {g["group_id"] for g in existing_groups}
+    
+    # 新規作成: group_idがNoneのもの
+    to_create = [g for g in modal_groups if not g.get("group_id")]
+    
+    # 更新: 両方に存在するgroup_id
+    to_update = [g for g in modal_groups if g.get("group_id") and g["group_id"] in existing_group_ids]
+    
+    # 削除: Firestoreにあってモーダルにないgroup_id
+    to_delete = list(existing_group_ids - modal_group_ids)
     
     return {
-        "to_create": modal_names - existing_names,
-        "to_update": modal_names & existing_names,
-        "to_delete": existing_names - modal_names
+        "to_create": to_create,
+        "to_update": to_update,
+        "to_delete": to_delete
     }
 
 
 def _sync_all_groups(group_service, workspace_id, modal_groups, diff, user_id):
     """
-    モーダルの内容とFirestoreを完全同期します（v2.2）。
+    モーダルの内容とFirestoreを完全同期します（v2.2 - UUID方式）。
     
     Args:
         group_service: GroupServiceインスタンス
@@ -501,50 +512,46 @@ def _sync_all_groups(group_service, workspace_id, modal_groups, diff, user_id):
         user_id: 実行ユーザーID
         
     処理:
-    1. 新規作成: to_createに含まれるグループを作成
-    2. 更新: to_updateに含まれるグループのメンバーを更新
-    3. 削除: to_deleteに含まれるグループを削除
+    1. 新規作成: group_idがNoneのグループを作成（UUID自動生成）
+    2. 更新: group_idが存在するグループのnameとmembersを更新
+    3. 削除: Firestoreにあってモーダルにないgroup_idを削除
     """
     # 新規作成
-    for name in diff["to_create"]:
-        group = next((g for g in modal_groups if g["name"] == name), None)
-        if not group:
-            continue
-        
+    for group in diff["to_create"]:
         try:
-            group_service.create_group_with_name_as_id(
+            # v2.1方式（UUID）で作成
+            group_service.create_group(
                 workspace_id=workspace_id,
-                name=name,
+                name=group["name"],
                 member_ids=group["member_ids"],
                 created_by=user_id
             )
-            logger.info(f"グループ作成(v2.2): {name}, Members={len(group['member_ids'])}")
+            logger.info(f"グループ作成(v2.2): {group['name']}, Members={len(group['member_ids'])}")
         except Exception as e:
-            logger.error(f"グループ作成失敗(v2.2): {name}, Error={e}", exc_info=True)
+            logger.error(f"グループ作成失敗(v2.2): {group['name']}, Error={e}", exc_info=True)
     
     # 更新
-    for name in diff["to_update"]:
-        group = next((g for g in modal_groups if g["name"] == name), None)
-        if not group:
-            continue
-        
+    for group in diff["to_update"]:
         try:
-            group_service.update_group_with_name_as_id(
+            # v2.1方式（UUID）で更新
+            group_service.update_group_members(
                 workspace_id=workspace_id,
-                group_id=name,
+                group_id=group["group_id"],
                 member_ids=group["member_ids"]
             )
-            logger.info(f"グループ更新(v2.2): {name}, Members={len(group['member_ids'])}")
+            logger.info(f"グループ更新(v2.2): {group['name']} ({group['group_id']}), Members={len(group['member_ids'])}")
         except Exception as e:
-            logger.error(f"グループ更新失敗(v2.2): {name}, Error={e}", exc_info=True)
+            logger.error(f"グループ更新失敗(v2.2): {group['name']}, Error={e}", exc_info=True)
     
     # 削除
-    for name in diff["to_delete"]:
+    for group_id in diff["to_delete"]:
         try:
-            group_service.delete_group_with_name_as_id(
-                workspace_id=workspace_id,
-                group_id=name
-            )
-            logger.info(f"グループ削除(v2.2): {name}")
+            # Firestoreから直接削除
+            from google.cloud import firestore
+            db = firestore.Client()
+            group_ref = db.collection("groups").document(workspace_id)\
+                          .collection("groups").document(group_id)
+            group_ref.delete()
+            logger.info(f"グループ削除(v2.2): {group_id}")
         except Exception as e:
-            logger.error(f"グループ削除失敗(v2.2): {name}, Error={e}", exc_info=True)
+            logger.error(f"グループ削除失敗(v2.2): {group_id}, Error={e}", exc_info=True)

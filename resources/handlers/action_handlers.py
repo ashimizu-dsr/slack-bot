@@ -267,10 +267,11 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             # 全グループを取得
             existing_groups = group_service.get_all_groups(workspace_id)
             
-            # グループデータを整形
+            # グループデータを整形（nameフィールドを使用）
             groups_data = [
                 {
-                    "name": g.get("group_id", g.get("name")),
+                    "group_id": g.get("group_id"),  # UUID（保存時の識別用）
+                    "name": g.get("name", ""),       # グループ名（画面表示用）
                     "member_ids": g.get("member_ids", [])
                 }
                 for g in existing_groups
@@ -314,6 +315,7 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             # 1. 現在の状態を取得
             metadata = json.loads(body["view"].get("private_metadata", "{}"))
             current_count = metadata.get("group_count", 1)
+            existing_groups_data = metadata.get("groups_data", [])
             
             # 2. 現在の入力値を保存
             state_values = body["view"]["state"]["values"]
@@ -321,7 +323,7 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             # 通知先（管理者）
             admin_ids = state_values.get("admin_users_block", {}).get("admin_users_select", {}).get("selected_users", [])
             
-            # 各グループの情報
+            # 各グループの情報（画面の入力値 + metadataのgroup_id）
             groups_data = []
             for i in range(1, current_count + 1):
                 name_block = f"group_name_{i}"
@@ -332,7 +334,13 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                 
                 member_ids = state_values.get(members_block, {}).get("target_members_select", {}).get("selected_users", [])
                 
+                # metadataから既存のgroup_idを取得（存在する場合）
+                group_id = None
+                if i <= len(existing_groups_data):
+                    group_id = existing_groups_data[i - 1].get("group_id")
+                
                 groups_data.append({
+                    "group_id": group_id,  # 既存グループの場合はUUID、新規の場合はNone
                     "name": name,
                     "member_ids": member_ids
                 })

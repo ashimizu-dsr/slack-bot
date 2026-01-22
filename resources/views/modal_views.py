@@ -876,6 +876,7 @@ def create_member_settings_modal_v2(
         "close": {"type": "plain_text", "text": "キャンセル"},
         "blocks": blocks,
         "private_metadata": json.dumps({
-            "group_count": group_count
+            "group_count": group_count,
+            "groups_data": groups_data  # group_idも含む全データを保存
         })
     }
