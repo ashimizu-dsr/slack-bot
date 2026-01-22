@@ -694,3 +694,188 @@ def create_member_settings_modal_v2_1(
             }
         ]
     }
+
+# ==========================================
+# 5-3. メンバー設定モーダル v2.2（複数グループ一括管理版）
+# ==========================================
+def create_member_settings_modal_v2(
+    admin_ids: List[str] = None,
+    groups_data: List[Dict[str, Any]] = None,
+    group_count: int = None
+) -> Dict[str, Any]:
+    """
+    v2.2の設定モーダルを生成します（複数グループ同時編集版）。
+    
+    このモーダルは最大10グループを一度に編集できる機能を提供します。
+    「➕ グループの新規作成」ボタンで動的にグループ入力セットを追加可能です。
+    
+    Args:
+        admin_ids: 現在の管理者（通知先）のユーザーID配列
+        groups_data: 既存グループデータの配列
+            [
+                {"name": "営業1課", "member_ids": ["U001", "U002"]},
+                {"name": "営業2課", "member_ids": ["U003"]},
+                ...
+            ]
+        group_count: 表示するグループ数（Noneの場合はgroups_dataの長さ、最小1）
+        
+    Returns:
+        Slack モーダルビューの辞書
+        
+    Note:
+        - group_countを指定することで、空のグループ入力セットを追加可能
+        - 最大10グループ
+        - 各グループの入力セットには初期値（groups_data）を設定
+        - private_metadataに現在のgroup_countを保存し、動的更新に使用
+        
+    Example:
+        # 新規（グループなし）
+        view = create_member_settings_modal_v2()
+        
+        # 既存グループを編集
+        view = create_member_settings_modal_v2(
+            admin_ids=["U001"],
+            groups_data=[
+                {"name": "営業1課", "member_ids": ["U002", "U003"]},
+                {"name": "営業2課", "member_ids": ["U004"]}
+            ]
+        )
+        
+        # 動的にグループを追加（views.update用）
+        view = create_member_settings_modal_v2(
+            admin_ids=["U001"],
+            groups_data=[...],
+            group_count=3  # 既存2つ + 新規1つ
+        )
+    """
+    if groups_data is None:
+        groups_data = []
+    
+    if admin_ids is None:
+        admin_ids = []
+    
+    # グループ数を決定（最小1、最大10）
+    if group_count is None:
+        group_count = max(len(groups_data), 1)
+    
+    group_count = min(max(group_count, 1), 10)
+    
+    # ==========================================
+    # ブロックの構築
+    # ==========================================
+    blocks = []
+    
+    # 1. 通知先（管理者）
+    admin_element = {
+        "type": "multi_users_select",
+        "action_id": "admin_users_select",
+        "placeholder": {"type": "plain_text", "text": "ユーザを選択"}
+    }
+    
+    if admin_ids:
+        admin_element["initial_users"] = admin_ids
+    
+    blocks.append({
+        "type": "input",
+        "block_id": "admin_users_block",
+        "element": admin_element,
+        "label": {"type": "plain_text", "text": "通知先"}
+    })
+    
+    # 2. 説明文
+    blocks.append({
+        "type": "context",
+        "elements": [
+            {
+                "type": "mrkdwn",
+                "text": "ⓘ 通知先に登録されたユーザには、午前9時に下記グループの当日の勤怠連絡が通知されます。"
+            }
+        ]
+    })
+    
+    blocks.append({"type": "divider"})
+    
+    # 3. グループ入力セットを追加
+    for i in range(1, group_count + 1):
+        # 既存データがあれば初期値として設定
+        initial_name = ""
+        initial_members = []
+        
+        if i <= len(groups_data):
+            initial_name = groups_data[i - 1].get("name", "")
+            initial_members = groups_data[i - 1].get("member_ids", [])
+        
+        # グループ名入力
+        name_element = {
+            "type": "plain_text_input",
+            "action_id": "group_name_input",
+            "placeholder": {"type": "plain_text", "text": "例：1課"}
+        }
+        
+        if initial_name:
+            name_element["initial_value"] = initial_name
+        
+        blocks.append({
+            "type": "input",
+            "block_id": f"group_name_{i}",
+            "element": name_element,
+            "label": {"type": "plain_text", "text": f"#{i}：グループ名"},
+            "optional": True
+        })
+        
+        # メンバー選択
+        members_element = {
+            "type": "multi_users_select",
+            "action_id": "target_members_select",
+            "placeholder": {"type": "plain_text", "text": f"例：{i}課の所属者"}
+        }
+        
+        if initial_members:
+            members_element["initial_users"] = initial_members
+        
+        blocks.append({
+            "type": "input",
+            "block_id": f"group_members_{i}",
+            "element": members_element,
+            "label": {"type": "plain_text", "text": f"#{i}：メンバー"},
+            "optional": True
+        })
+        
+        blocks.append({"type": "divider"})
+    
+    # 4. グループ追加ボタン（10未満の場合のみ）
+    if group_count < 10:
+        blocks.append({
+            "type": "actions",
+            "block_id": "add_group_action_block",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "➕ グループの新規作成"},
+                    "value": "add_group",
+                    "action_id": "add_group_button_action"
+                }
+            ]
+        })
+    else:
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": "_グループは最大10個までです_"}
+            ]
+        })
+    
+    # ==========================================
+    # モーダル構造を返す
+    # ==========================================
+    return {
+        "type": "modal",
+        "callback_id": "member_settings_v2",
+        "title": {"type": "plain_text", "text": "勤怠レポートの設定"},
+        "submit": {"type": "plain_text", "text": "保存"},
+        "close": {"type": "plain_text", "text": "キャンセル"},
+        "blocks": blocks,
+        "private_metadata": json.dumps({
+            "group_count": group_count
+        })
+    }

@@ -239,17 +239,17 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             logger.error(f"履歴フィルタ更新失敗: {e}", exc_info=True)
 
     # ==========================================
-    # 6. v2.1: 設定モーダルを開く（テキスト入力版・UPSERT方式）
+    # 6. v2.2: 設定モーダルを開く（複数グループ一括管理版）
     # ==========================================
     @app.shortcut("open_member_setup_modal")
-    def handle_settings_v2_1_shortcut(ack, body, client):
+    def handle_settings_v2_shortcut(ack, body, client):
         """
-        グローバルショートカット「設定」の処理（v2.1版）。
+        グローバルショートカット「設定」の処理（v2.2版）。
         
-        v2.0との違い:
-        - グループ選択のドロップダウンを廃止
-        - グループ名をテキスト入力で指定
-        - 動的更新が不要になったため、シンプルな実装
+        v2.1との違い:
+        - 複数グループを同時編集可能
+        - 既存グループを全て表示
+        - 動的にグループを追加可能
         """
         ack()
         workspace_id = body["team"]["id"]
@@ -265,18 +265,97 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             admin_ids = workspace_service.get_admin_ids(workspace_id)
             
             # 全グループを取得
-            all_groups = group_service.get_all_groups(workspace_id)
+            existing_groups = group_service.get_all_groups(workspace_id)
             
-            # モーダルを生成（v2.1版）
-            view = create_member_settings_modal_v2_1(
+            # グループデータを整形
+            groups_data = [
+                {
+                    "name": g.get("group_id", g.get("name")),
+                    "member_ids": g.get("member_ids", [])
+                }
+                for g in existing_groups
+            ]
+            
+            # モーダルを生成（v2.2版）
+            view = create_member_settings_modal_v2(
                 admin_ids=admin_ids,
-                all_groups=all_groups
+                groups_data=groups_data
             )
             
             client.views_open(trigger_id=body["trigger_id"], view=view)
-            logger.info(f"設定モーダル表示(v2.1): Workspace={workspace_id}, Groups={len(all_groups)}")
+            logger.info(f"設定モーダル表示(v2.2): Workspace={workspace_id}, Groups={len(groups_data)}")
         except Exception as e:
             logger.error(f"設定モーダル表示失敗: {e}", exc_info=True)
+
+    # ==========================================
+    # 7. v2.2: グループ追加ボタン押下
+    # ==========================================
+    @app.action("add_group_button_action")
+    def handle_add_group_button(ack, body, client):
+        """
+        グループ追加ボタンのハンドラー（v2.2で追加）。
+        
+        現在の入力値を保持しつつ、新しいグループ入力セットを追加してモーダルを更新します。
+        
+        動作:
+        1. 現在のモーダルからmetadataとstate.valuesを取得
+        2. 既に入力されている「通知先」「各グループ名」「各メンバー」を抽出
+        3. group_countを+1
+        4. 新しいモーダルを生成（既存の値を initial_value/initial_users として設定）
+        5. views.updateでモーダルを更新
+        
+        Note:
+        - views.updateは既存の入力値をクリアするため、明示的に保持する必要があります
+        - 最大10グループまで追加可能
+        """
+        ack()
+        
+        try:
+            # 1. 現在の状態を取得
+            metadata = json.loads(body["view"].get("private_metadata", "{}"))
+            current_count = metadata.get("group_count", 1)
+            
+            # 2. 現在の入力値を保存
+            state_values = body["view"]["state"]["values"]
+            
+            # 通知先（管理者）
+            admin_ids = state_values.get("admin_users_block", {}).get("admin_users_select", {}).get("selected_users", [])
+            
+            # 各グループの情報
+            groups_data = []
+            for i in range(1, current_count + 1):
+                name_block = f"group_name_{i}"
+                members_block = f"group_members_{i}"
+                
+                name_raw = state_values.get(name_block, {}).get("group_name_input", {}).get("value", "")
+                name = name_raw.strip() if name_raw else ""
+                
+                member_ids = state_values.get(members_block, {}).get("target_members_select", {}).get("selected_users", [])
+                
+                groups_data.append({
+                    "name": name,
+                    "member_ids": member_ids
+                })
+            
+            # 3. 新しいグループ数（最大10）
+            new_count = min(current_count + 1, 10)
+            
+            # 4. 新しいモーダルを生成
+            view = create_member_settings_modal_v2(
+                admin_ids=admin_ids,
+                groups_data=groups_data,
+                group_count=new_count
+            )
+            
+            # 5. モーダルを更新
+            client.views_update(
+                view_id=body["view"]["id"],
+                hash=body["view"]["hash"],
+                view=view
+            )
+            logger.info(f"グループ追加: {current_count} → {new_count}")
+        except Exception as e:
+            logger.error(f"グループ追加失敗: {e}", exc_info=True)
 
     # ==========================================
     # 7. v2.0: グループ選択時の動的更新（v2.1では廃止予定）

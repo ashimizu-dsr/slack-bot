@@ -231,3 +231,140 @@ class GroupService:
             v2.0では未実装（v2.2で追加予定）
         """
         raise NotImplementedError("グループ削除機能はv2.2で実装予定です。")
+
+    # ==========================================
+    # v2.2: name-as-id方式のメソッド群
+    # ==========================================
+
+    def create_group_with_name_as_id(
+        self, 
+        workspace_id: str, 
+        name: str, 
+        member_ids: List[str] = None, 
+        created_by: str = None
+    ) -> str:
+        """
+        グループ名をドキュメントIDとして使用してグループを作成します（v2.2で追加）。
+        
+        Args:
+            workspace_id: Slackワークスペースの一意ID
+            name: グループ名（ドキュメントIDとして使用）
+            member_ids: 初期メンバーのユーザーID配列
+            created_by: 作成者のユーザーID（省略可能）
+            
+        Returns:
+            作成されたグループのgroup_id（= sanitized name）
+            
+        Raises:
+            ValidationError: グループ名が空、または既に存在する場合
+            
+        Note:
+            - v2.1のcreate_group()とは異なり、UUIDを生成せずnameをそのまま使用
+            - グループ名はsanitize_group_name()でサニタイズされます
+            - 重複チェックは呼び出し側で行うことを推奨
+        """
+        from resources.shared.utils import sanitize_group_name
+        
+        if not name or not name.strip():
+            raise ValidationError("グループ名が空です", "⚠️ グループ名を入力してください。")
+        
+        sanitized_name = sanitize_group_name(name.strip())
+        
+        if not sanitized_name:
+            raise ValidationError("グループ名が無効です", "⚠️ 有効なグループ名を入力してください。")
+        
+        try:
+            group_ref = self.db.collection("groups").document(workspace_id)\
+                                .collection("groups").document(sanitized_name)
+            
+            # 既存チェック
+            if group_ref.get().exists:
+                raise ValidationError(
+                    f"グループ名が既に存在します: {sanitized_name}",
+                    f"⚠️ グループ名「{sanitized_name}」は既に存在します。"
+                )
+            
+            data = {
+                "group_id": sanitized_name,
+                "name": sanitized_name,
+                "member_ids": member_ids or [],
+                "created_at": firestore.SERVER_TIMESTAMP,
+                "updated_at": firestore.SERVER_TIMESTAMP
+            }
+            
+            if created_by:
+                data["created_by"] = created_by
+            
+            group_ref.set(data)
+            logger.info(f"グループ作成成功(v2.2): {sanitized_name}, Members={len(member_ids or [])}")
+            return sanitized_name
+        except ValidationError:
+            raise
+        except Exception as e:
+            logger.error(f"グループ作成失敗(v2.2): {e}", exc_info=True)
+            raise
+
+    def update_group_with_name_as_id(
+        self, 
+        workspace_id: str, 
+        group_id: str, 
+        member_ids: List[str]
+    ) -> None:
+        """
+        グループのメンバーを更新します（v2.2版、group_id = グループ名）。
+        
+        Args:
+            workspace_id: Slackワークスペースの一意ID
+            group_id: グループ名（ドキュメントID）
+            member_ids: 新しいメンバーのユーザーID配列
+            
+        Raises:
+            ValidationError: グループが存在しない場合
+        """
+        try:
+            group_ref = self.db.collection("groups").document(workspace_id)\
+                                .collection("groups").document(group_id)
+            
+            # 存在確認
+            if not group_ref.get().exists:
+                raise ValidationError(
+                    f"グループが存在しません: {group_id}",
+                    "⚠️ 指定されたグループが見つかりません。"
+                )
+            
+            group_ref.update({
+                "member_ids": member_ids,
+                "updated_at": firestore.SERVER_TIMESTAMP
+            })
+            logger.info(f"グループメンバー更新成功(v2.2): {group_id}, Members={len(member_ids)}")
+        except ValidationError:
+            raise
+        except Exception as e:
+            logger.error(f"グループメンバー更新失敗(v2.2): {e}", exc_info=True)
+            raise
+
+    def delete_group_with_name_as_id(self, workspace_id: str, group_id: str) -> None:
+        """
+        グループを削除します（v2.2で実装）。
+        
+        Args:
+            workspace_id: Slackワークスペースの一意ID
+            group_id: グループ名（ドキュメントID）
+            
+        Raises:
+            ValidationError: グループが存在しない場合
+        """
+        try:
+            group_ref = self.db.collection("groups").document(workspace_id)\
+                                .collection("groups").document(group_id)
+            
+            # 存在確認
+            if not group_ref.get().exists:
+                logger.warning(f"削除対象グループが存在しません（スキップ）: {group_id}")
+                return
+            
+            group_ref.delete()
+            logger.info(f"グループ削除成功(v2.2): {group_id}")
+        except Exception as e:
+            logger.error(f"グループ削除失敗(v2.2): {e}", exc_info=True)
+            raise
