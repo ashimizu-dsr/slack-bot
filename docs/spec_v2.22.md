@@ -48,7 +48,7 @@
 
 ## v2.22の新機能概要
 
-### 1. スラッシュコマンドからの起動
+### 1. グローバルショートカットからの起動
 
 #### 設計思想
 
@@ -57,14 +57,14 @@
 グローバルショートカット「設定」 → モーダル表示
 
 【新方式（v2.22）】
-スラッシュコマンド /report-admin → モーダル表示
+グローバルショートカット「レポート設定」 → モーダル表示
 ```
 
 #### メリット
 
-1. **明示的なアクセス**: コマンド名で機能が分かりやすい
-2. **権限管理**: 管理者のみに公開可能
-3. **発見しやすい**: `/` で補完候補に表示
+1. **アクセスのしやすさ**: ⚡アイコンから簡単にアクセス
+2. **UI統一**: 他の機能と同じショートカット方式
+3. **発見しやすい**: ショートカット一覧に表示
 
 ### 2. 一覧表示UI
 
@@ -152,8 +152,8 @@ sequenceDiagram
     participant Modal2 as ②追加/③編集/④削除
     participant DB as Firestore
 
-    User->>Slack: /report-admin
-    Slack->>Bot: command handler
+    User->>Slack: ⚡ショートカット「レポート設定」
+    Slack->>Bot: shortcut handler
     Bot->>DB: get_admin_ids()
     Bot->>DB: get_all_groups()
     Bot->>Modal1: views.open(レポート設定モーダル)
@@ -209,8 +209,8 @@ sequenceDiagram
 
 ```
 ユーザー
-  → /report-admin
-  → handle_report_admin_command()
+  → ショートカット「レポート設定」
+  → handle_report_admin_shortcut()
     → WorkspaceService.get_admin_ids()
     → GroupService.get_all_groups()
     → create_admin_settings_modal()
@@ -632,25 +632,24 @@ workspace_settings/{workspace_id}
 
 ## 処理フロー
 
-### 1. スラッシュコマンド登録
+### 1. グローバルショートカット登録
 
 Slack Appの設定で以下を登録：
 
-- **Command**: `/report-admin`
-- **Request URL**: `https://your-app.run.app/slack/events`
-- **Short Description**: レポート設定を管理
-- **Usage Hint**: （なし）
+- **Name**: レポート設定
+- **Short Description**: 勤怠レポートの設定を管理
+- **Callback ID**: `open_report_admin`
 
 ### 2. ハンドラー実装
 
 ```python
-@app.command("/report-admin")
-def handle_report_admin_command(ack, body, client):
+@app.shortcut("open_report_admin")
+def handle_report_admin_shortcut(ack, body, client):
     """
-    /report-admin コマンドのハンドラー
+    グローバルショートカット「レポート設定」のハンドラー
     """
     ack()
-    workspace_id = body["team_id"]
+    workspace_id = body["team"]["id"]
     
     # 管理者とグループを取得
     admin_ids = workspace_service.get_admin_ids(workspace_id)
@@ -690,15 +689,15 @@ def _update_parent_modal(client, view_id, workspace_id):
 
 ## APIリファレンス
 
-### スラッシュコマンドハンドラー
+### ショートカットハンドラー
 
-#### `handle_report_admin_command()`
+#### `handle_report_admin_shortcut()`
 
 ```python
-@app.command("/report-admin")
-def handle_report_admin_command(ack, body, client):
+@app.shortcut("open_report_admin")
+def handle_report_admin_shortcut(ack, body, client):
     """
-    /report-admin コマンドのハンドラー
+    グローバルショートカット「レポート設定」のハンドラー
     
     レポート設定モーダル（一覧）を表示します。
     """
@@ -790,7 +789,7 @@ def handle_delete_confirm_submission(ack, body, view, client):
 
 | 項目 | v2.2 | v2.22 | 変更理由 |
 |------|------|-------|---------|
-| **起動方法** | ショートカット | スラッシュコマンド | 明示性向上 |
+| **起動方法** | ショートカット | ショートカット | UI統一 |
 | **UI形式** | 入力フォーム | 一覧表示 | 視認性向上 |
 | **編集方式** | 全グループ同時 | 個別編集 | シンプル化 |
 | **モーダル遷移** | views.update | views.push | 自動復帰 |
@@ -804,7 +803,7 @@ def handle_delete_confirm_submission(ack, body, view, client):
 
 ### 追加される機能（v2.22）
 
-1. **スラッシュコマンド**: `/report-admin`
+1. **グローバルショートカット**: `open_report_admin`
 2. **オーバーフローメニュー**: 編集/削除の選択
 3. **views.push**: モーダルスタック
 4. **削除確認モーダル**: 明示的な削除フロー
@@ -813,10 +812,10 @@ def handle_delete_confirm_submission(ack, body, view, client):
 
 ## 実装計画
 
-### フェーズ1: スラッシュコマンド登録
+### フェーズ1: グローバルショートカット登録
 
-1. Slack Appの設定で `/report-admin` を登録
-2. ハンドラー `handle_report_admin_command()` を実装
+1. Slack Appの設定で `open_report_admin` を登録
+2. ハンドラー `handle_report_admin_shortcut()` を実装
 
 ### フェーズ2: UI層の実装
 
@@ -870,7 +869,7 @@ def handle_delete_confirm_submission(ack, body, view, client):
 
 ### 次のステップ
 
-1. **v2.22の実装**: 本仕様書に基づいて実装
+1. **Slack Appの設定**: グローバルショートカット `open_report_admin` を登録
 2. **テスト**: 統合テストを実施
 3. **デプロイ**: Google Cloud Runにデプロイ
 4. **v2.2コードの削除**: v2.22が安定したらv2.2のコードを削除

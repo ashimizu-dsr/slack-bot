@@ -445,17 +445,17 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             logger.error(f"グループ選択処理失敗: {e}", exc_info=True)
 
     # ==========================================
-    # 8. v2.22: スラッシュコマンド /report-admin
+    # 8. v2.22: グローバルショートカット「レポート設定」
     # ==========================================
-    @app.command("/report-admin")
-    def handle_report_admin_command(ack, body, client):
+    @app.shortcut("open_report_admin")
+    def handle_report_admin_shortcut(ack, body, client):
         """
-        /report-admin コマンドのハンドラー（v2.22）。
+        グローバルショートカット「レポート設定」のハンドラー（v2.22）。
         
         レポート設定モーダル（一覧表示）を開きます。
         """
         ack()
-        workspace_id = body["team_id"]
+        workspace_id = body["team"]["id"]
         
         try:
             from resources.services.group_service import GroupService
