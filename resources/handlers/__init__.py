@@ -13,7 +13,7 @@ if project_root not in sys.path:
 
 from .slack_handlers import register_slack_handlers
 from .action_handlers import register_action_handlers
-from .modal_handlers import register_modal_handlers
+from .modal_handlers import register_modal_handlers, register_modal_handlers_v22
 # from .command_handlers import register_command_handlers
 # from .shortcut_handlers import register_shortcut_handlers
 
@@ -29,6 +29,9 @@ def register_all_handlers(app, attendance_service, notification_service):
     
     # 2. モーダル操作（勤怠編集・保存、設定保存）
     register_modal_handlers(app, attendance_service, notification_service)
+    
+    # 2-1. v2.22: レポート設定モーダル（新規）
+    register_modal_handlers_v22(app)
     
     # 3. スラッシュコマンド
     # register_command_handlers(app)

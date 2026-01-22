@@ -10,9 +10,10 @@ import json
 from resources.views.modal_views import (
     create_attendance_modal_view, 
     create_history_modal_view,
-    create_member_settings_modal_view,
-    create_member_settings_modal_v2,
-    create_member_settings_modal_v2_1,
+    # v2.22: 新しいレポート設定モーダル
+    create_admin_settings_modal,
+    create_add_group_modal,
+    create_edit_group_modal,
     create_delete_confirm_modal
 )
 from resources.shared.db import (
@@ -240,9 +241,10 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
 
     # ==========================================
     # 6. v2.2: 設定モーダルを開く（複数グループ一括管理版）
+    # 【注意】v2.22でスラッシュコマンド方式に移行したため、このハンドラーは無効化されています
     # ==========================================
-    @app.shortcut("open_member_setup_modal")
-    def handle_settings_v2_shortcut(ack, body, client):
+    # @app.shortcut("open_member_setup_modal")
+    def handle_settings_v2_shortcut_deprecated(ack, body, client):
         """
         グローバルショートカット「設定」の処理（v2.2版）。
         
@@ -290,9 +292,10 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
 
     # ==========================================
     # 7. v2.2: グループ追加ボタン押下
+    # 【注意】v2.22では個別の追加モーダルに移行したため、このハンドラーは無効化されています
     # ==========================================
-    @app.action("add_group_button_action")
-    def handle_add_group_button(ack, body, client):
+    # @app.action("add_group_button_action")
+    def handle_add_group_button_deprecated(ack, body, client):
         """
         グループ追加ボタンのハンドラー（v2.2で追加）。
         
@@ -440,3 +443,122 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             logger.info(f"モーダル更新成功: Workspace={workspace_id}")
         except Exception as e:
             logger.error(f"グループ選択処理失敗: {e}", exc_info=True)
+
+    # ==========================================
+    # 8. v2.22: スラッシュコマンド /report-admin
+    # ==========================================
+    @app.command("/report-admin")
+    def handle_report_admin_command(ack, body, client):
+        """
+        /report-admin コマンドのハンドラー（v2.22）。
+        
+        レポート設定モーダル（一覧表示）を開きます。
+        """
+        ack()
+        workspace_id = body["team_id"]
+        
+        try:
+            from resources.services.group_service import GroupService
+            from resources.services.workspace_service import WorkspaceService
+            
+            group_service = GroupService()
+            workspace_service = WorkspaceService()
+            
+            # 管理者IDを取得
+            admin_ids = workspace_service.get_admin_ids(workspace_id)
+            
+            # 全グループを取得
+            groups = group_service.get_all_groups(workspace_id)
+            
+            # モーダルを生成（v2.22版）
+            view = create_admin_settings_modal(admin_ids=admin_ids, groups=groups)
+            
+            # モーダルを表示
+            client.views_open(trigger_id=body["trigger_id"], view=view)
+            logger.info(f"レポート設定モーダル表示(v2.22): Workspace={workspace_id}, Groups={len(groups)}")
+        except Exception as e:
+            logger.error(f"レポート設定モーダル表示失敗: {e}", exc_info=True)
+
+    # ==========================================
+    # 9. v2.22: 追加ボタン押下
+    # ==========================================
+    @app.action("add_new_group")
+    def handle_add_new_group_button(ack, body, client):
+        """
+        「追加」ボタンのハンドラー（v2.22）。
+        
+        views.pushでグループ追加モーダルを表示します。
+        """
+        ack()
+        
+        try:
+            # 追加モーダルを生成
+            view = create_add_group_modal()
+            
+            # views.pushで表示
+            client.views_push(view_id=body["view"]["id"], view=view)
+            logger.info("グループ追加モーダル表示(v2.22)")
+        except Exception as e:
+            logger.error(f"グループ追加モーダル表示失敗: {e}", exc_info=True)
+
+    # ==========================================
+    # 10. v2.22: オーバーフローメニュー（...）押下
+    # ==========================================
+    @app.action("group_actions_*")
+    def handle_group_overflow_menu(ack, body, client):
+        """
+        オーバーフローメニュー（...）のハンドラー（v2.22）。
+        
+        action_value:
+          - "edit_{group_id}": 編集モーダルをpush
+          - "delete_{group_id}": 削除確認モーダルをpush
+        """
+        ack()
+        workspace_id = body["team"]["id"]
+        
+        try:
+            from resources.services.group_service import GroupService
+            
+            group_service = GroupService()
+            
+            # 選択されたアクションの値（edit_xxx または delete_xxx）
+            action_value = body["actions"][0]["selected_option"]["value"]
+            
+            # アクションタイプとgroup_idを分離
+            action_type, group_id = action_value.split("_", 1)
+            
+            if action_type == "edit":
+                # 編集モーダルを表示
+                group = group_service.get_group_by_id(workspace_id, group_id)
+                
+                if not group:
+                    logger.error(f"グループが見つかりません: {group_id}")
+                    return
+                
+                view = create_edit_group_modal(
+                    group_id=group["group_id"],
+                    group_name=group["name"],
+                    member_ids=group.get("member_ids", [])
+                )
+                
+                client.views_push(view_id=body["view"]["id"], view=view)
+                logger.info(f"編集モーダル表示(v2.22): {group_id}")
+                
+            elif action_type == "delete":
+                # 削除確認モーダルを表示
+                group = group_service.get_group_by_id(workspace_id, group_id)
+                
+                if not group:
+                    logger.error(f"グループが見つかりません: {group_id}")
+                    return
+                
+                view = create_delete_confirm_modal(
+                    group_id=group["group_id"],
+                    group_name=group["name"]
+                )
+                
+                client.views_push(view_id=body["view"]["id"], view=view)
+                logger.info(f"削除確認モーダル表示(v2.22): {group_id}")
+                
+        except Exception as e:
+            logger.error(f"オーバーフローメニュー処理失敗: {e}", exc_info=True)
