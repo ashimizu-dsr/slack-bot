@@ -447,7 +447,8 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
     # ==========================================
     # 8. v2.22: グローバルショートカット「レポート設定」
     # ==========================================
-    @app.shortcut("open_report_admin")
+    @app.shortcut("open_member_setup_modal")
+    # @app.shortcut("open_report_admin")
     def handle_report_admin_shortcut(ack, body, client):
         """
         グローバルショートカット「レポート設定」のハンドラー（v2.22）。
