@@ -880,3 +880,256 @@ def create_member_settings_modal_v2(
             "groups_data": groups_data  # group_idも含む全データを保存
         })
     }
+
+# ==========================================
+# 6. レポート設定モーダル v2.22（一覧表示 + views.push版）
+# ==========================================
+
+def create_admin_settings_modal(admin_ids: List[str] = None, groups: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    レポート設定モーダル（一覧表示）を生成します（v2.22）。
+    
+    このモーダルはグループを一覧形式で表示し、オーバーフローメニュー（...）から
+    個別に編集・削除できる機能を提供します。
+    
+    Args:
+        admin_ids: 現在の管理者（通知先）のユーザーID配列
+        groups: 既存グループデータの配列
+            [
+                {"group_id": "group_abc", "name": "1課", "member_ids": ["U001", "U002"]},
+                ...
+            ]
+        
+    Returns:
+        Slack モーダルビューの辞書
+        
+    Note:
+        - グループが0件の場合は「まだグループが登録されていません」を表示
+        - 各グループにオーバーフローメニュー（...）を配置
+        - 追加ボタンから views.push で追加モーダルを表示
+        
+    Example:
+        # 新規（グループなし）
+        view = create_admin_settings_modal()
+        
+        # 既存データを表示
+        view = create_admin_settings_modal(
+            admin_ids=["U001"],
+            groups=[
+                {"group_id": "group_abc", "name": "1課", "member_ids": ["U002", "U003"]},
+                {"group_id": "group_def", "name": "2課", "member_ids": ["U004"]}
+            ]
+        )
+    """
+    if admin_ids is None:
+        admin_ids = []
+    
+    if groups is None:
+        groups = []
+    
+    # ブロックの構築
+    blocks = []
+    
+    # 1. 通知先（管理者）
+    admin_element = {
+        "type": "multi_users_select",
+        "action_id": "admin_select",
+        "placeholder": {"type": "plain_text", "text": "ユーザを選択"}
+    }
+    
+    if admin_ids:
+        admin_element["initial_users"] = admin_ids
+    
+    blocks.append({
+        "type": "input",
+        "block_id": "admin_block",
+        "element": admin_element,
+        "label": {"type": "plain_text", "text": "レポート通知先"}
+    })
+    
+    # 2. 説明文
+    blocks.append({
+        "type": "context",
+        "elements": [
+            {
+                "type": "mrkdwn",
+                "text": "ⓘ ここに登録されたユーザには9:00に勤怠情報が通知されます。"
+            }
+        ]
+    })
+    
+    blocks.append({"type": "divider"})
+    
+    # 3. グループ一覧
+    if groups:
+        for i, group in enumerate(groups, 1):
+            # メンバーをメンション形式で表示
+            members_text = ", ".join([f"<@{uid}>" for uid in group.get("member_ids", [])])
+            if not members_text:
+                members_text = "（メンバーなし）"
+            
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*{group['name']}*\n{members_text}"
+                },
+                "accessory": {
+                    "type": "overflow",
+                    "action_id": f"group_actions_{i}",
+                    "options": [
+                        {
+                            "text": {"type": "plain_text", "text": "🔄 編集", "emoji": True},
+                            "value": f"edit_{group['group_id']}"
+                        },
+                        {
+                            "text": {"type": "plain_text", "text": "❌ 削除", "emoji": True},
+                            "value": f"delete_{group['group_id']}"
+                        }
+                    ]
+                }
+            })
+            blocks.append({"type": "divider"})
+    else:
+        # グループが0件の場合
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "_まだグループが登録されていません_"}
+        })
+        blocks.append({"type": "divider"})
+    
+    # 4. 追加ボタン
+    blocks.append({
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": "*➕ 新しいグループを追加*"},
+        "accessory": {
+            "type": "button",
+            "text": {"type": "plain_text", "text": "追加", "emoji": True},
+            "style": "primary",
+            "action_id": "add_new_group"
+        }
+    })
+    
+    return {
+        "type": "modal",
+        "callback_id": "admin_settings_modal",
+        "title": {"type": "plain_text", "text": "レポート設定", "emoji": True},
+        "submit": {"type": "plain_text", "text": "保存", "emoji": True},
+        "close": {"type": "plain_text", "text": "キャンセル", "emoji": True},
+        "blocks": blocks
+    }
+
+
+def create_add_group_modal() -> Dict[str, Any]:
+    """
+    グループ追加モーダルを生成します（v2.22）。
+    
+    Returns:
+        Slack モーダルビューの辞書
+    """
+    return {
+        "type": "modal",
+        "callback_id": "add_group_modal",
+        "title": {"type": "plain_text", "text": "グループの追加"},
+        "submit": {"type": "plain_text", "text": "保存"},
+        "close": {"type": "plain_text", "text": "戻る"},
+        "blocks": [
+            {
+                "type": "input",
+                "block_id": "name_block",
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "name_input",
+                    "placeholder": {"type": "plain_text", "text": "グループ名称を入力"}
+                },
+                "label": {"type": "plain_text", "text": "グループ名称"}
+            },
+            {
+                "type": "input",
+                "block_id": "members_block",
+                "element": {
+                    "type": "multi_users_select",
+                    "action_id": "members_select",
+                    "placeholder": {"type": "plain_text", "text": "メンバーを選択"}
+                },
+                "label": {"type": "plain_text", "text": "所属メンバー"},
+                "optional": True
+            }
+        ]
+    }
+
+
+def create_edit_group_modal(group_id: str, group_name: str, member_ids: List[str]) -> Dict[str, Any]:
+    """
+    グループ編集モーダルを生成します（v2.22）。
+    
+    Args:
+        group_id: グループID（UUID）
+        group_name: グループ名
+        member_ids: メンバーのUser ID配列
+        
+    Returns:
+        Slack モーダルビューの辞書
+    """
+    return {
+        "type": "modal",
+        "callback_id": "edit_group_modal",
+        "title": {"type": "plain_text", "text": "グループの編集"},
+        "submit": {"type": "plain_text", "text": "更新"},
+        "close": {"type": "plain_text", "text": "戻る"},
+        "blocks": [
+            {
+                "type": "input",
+                "block_id": "name_block",
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "name_input",
+                    "initial_value": group_name
+                },
+                "label": {"type": "plain_text", "text": "グループ名称"}
+            },
+            {
+                "type": "input",
+                "block_id": "members_block",
+                "element": {
+                    "type": "multi_users_select",
+                    "action_id": "members_select",
+                    **({"initial_users": member_ids} if member_ids else {}),
+                    "placeholder": {"type": "plain_text", "text": "メンバーを選択"}
+                },
+                "label": {"type": "plain_text", "text": "所属メンバー"},
+                "optional": True
+            }
+        ],
+        "private_metadata": json.dumps({"group_id": group_id})
+    }
+
+
+def create_delete_confirm_modal(group_id: str, group_name: str) -> Dict[str, Any]:
+    """
+    削除確認モーダルを生成します（v2.22）。
+    
+    Args:
+        group_id: グループID（UUID）
+        group_name: グループ名
+        
+    Returns:
+        Slack モーダルビューの辞書
+    """
+    return {
+        "type": "modal",
+        "callback_id": "delete_confirm_modal",
+        "title": {"type": "plain_text", "text": "削除の確認"},
+        "submit": {"type": "plain_text", "text": "削除する", "emoji": True},
+        "close": {"type": "plain_text", "text": "キャンセル", "emoji": True},
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f":warning: *「{group_name}」の設定を完全に削除しますか？*\nこのグループに関連付けられたメンバー情報やレポート設定がすべて消去されます。"
+                }
+            }
+        ],
+        "private_metadata": json.dumps({"group_id": group_id, "group_name": group_name})
+    }
