@@ -131,10 +131,16 @@ def slack_bot(request):
             JST = timezone(timedelta(hours=9))
             today_str = datetime.datetime.now(JST).date().isoformat()
             
-            logger.info(f"Target date for report: {today_str}")
+            # --- 環境変数を使わないワークスペースIDの取得 ---
+            # 自分の情報を確認して Team ID を取得する
+            auth_info = app.client.auth_test()
+            workspace_id = auth_info.get("team_id")
             
-            # workspace_idの取得（環境変数から）
-            workspace_id = os.environ.get("SLACK_WORKSPACE_ID", "GLOBAL_WS")
+            if not workspace_id:
+                # 万が一取得できなかった場合のフォールバック
+                workspace_id = os.environ.get("SLACK_WORKSPACE_ID", "GLOBAL_WS")
+            
+            logger.info(f"Target date: {today_str}, Workspace ID: {workspace_id}")
             
             # レポート送信処理の実行
             notification_service.send_daily_report(today_str, workspace_id)
