@@ -52,41 +52,69 @@ def should_process_message(event) -> bool:
         
     Note:
         以下の条件で除外されます:
-        - Bot自身のメッセージ
+        - Bot自身のメッセージ（bot_id, bot_profile が存在する場合）
         - サブタイプがあるメッセージ（編集、削除など）
         - NLPが無効化されている
         - 指定チャンネル以外（環境変数でチャンネルIDが設定されている場合）
-        - 既に処理済みの通知メッセージ
+        - Bot自身が投稿した通知メッセージ（"ⓘ"で始まるメッセージ）
     """
+    # ==========================================
+    # 1. 必須フィールドのチェック
+    # ==========================================
     user_id = event.get("user")
     text = (event.get("text") or "").strip()
     channel = event.get("channel")
-
-    # 基本的な除外条件
-    if event.get("subtype") or event.get("bot_id") or not user_id or not text:
+    
+    if not user_id or not text:
         return False
     
-    # NLP機能の有効/無効チェック
+    # ==========================================
+    # 2. Bot判定（最重要）
+    # ==========================================
+    # Bot自身のメッセージを確実に除外
+    if event.get("bot_id"):
+        logger.debug(f"Bot判定: bot_id={event.get('bot_id')} が存在するため除外")
+        return False
+    
+    if event.get("bot_profile"):
+        logger.debug(f"Bot判定: bot_profile が存在するため除外")
+        return False
+    
+    # ==========================================
+    # 3. サブタイプのチェック
+    # ==========================================
+    # 編集、削除、ファイル共有など
+    if event.get("subtype"):
+        logger.debug(f"サブタイプ判定: subtype={event.get('subtype')} が存在するため除外")
+        return False
+    
+    # ==========================================
+    # 4. Bot通知メッセージの判定（追加の安全策）
+    # ==========================================
+    # Botが投稿した通知メッセージ（「ⓘ 〇〇 さんの勤怠連絡を記録しました」など）
+    # を確実に除外するため、テキストパターンでも判定
+    if text.startswith("ⓘ") and ("さんの勤怠連絡" in text):
+        logger.debug(f"Bot通知パターン判定: 除外")
+        return False
+    
+    # ==========================================
+    # 5. NLP機能の有効/無効チェック
+    # ==========================================
     from constants import ENABLE_CHANNEL_NLP, ATTENDANCE_CHANNEL_ID
     if not ENABLE_CHANNEL_NLP:
         return False
         
+    # ==========================================
+    # 6. チャンネル制限
+    # ==========================================
     # 指定チャンネルのみに制限（環境変数で設定されている場合）
     if ATTENDANCE_CHANNEL_ID and channel != ATTENDANCE_CHANNEL_ID:
         return False
     
-
-        
-    # 挨拶のみのメッセージを除外
+    # ==========================================
+    # 7. 挨拶のみのメッセージを除外
+    # ==========================================
     if not _is_likely_attendance_message(text):
-        return False
-
-    if (
-        event.get("bot_id") or 
-        event.get("subtype") or 
-        not event.get("user") or 
-        not (event.get("text") or "").strip()
-    ):
         return False
     
     return True
