@@ -491,12 +491,33 @@ def register_action_handlers(app, attendance_service, notification_service, disp
             
             # 全グループを取得
             groups = group_service.get_all_groups(workspace_id)
+
+            # --- 追加：user_name_map の生成 ---
+            # 全グループのメンバーIDと管理者IDを重複なく集める
+            all_uids = set(admin_ids)
+            for g in groups:
+                all_uids.update(g.get("member_ids", []))
+            
+            # ワークスペースのユーザー情報を取得してマップを作成
+            # (人数が多い場合は users_info をループするより users_list の方が効率的です)
+            user_name_map = {}
+            try:
+                users_data = client.users_list()
+                if users_data["ok"]:
+                    user_name_map = {u["id"]: u["real_name"] or u["name"] for u in users_data["members"] if u["id"] in all_uids}
+            except Exception as e:
+                logger.error(f"Failed to fetch user list: {e}")
             
             # モーダルを生成（v2.22版）
             view = create_admin_settings_modal(admin_ids=admin_ids, groups=groups)
             
-            # モーダルを表示
-            client.views_open(trigger_id=body["trigger_id"], view=view)
+            # モーダルを生成（user_name_mapを渡す）
+            view = create_admin_settings_modal(
+                admin_ids=admin_ids, 
+                groups=groups, 
+                user_name_map=user_name_map
+            )
+            
             logger.info(f"レポート設定モーダル表示(v2.22): Workspace={workspace_id}, Groups={len(groups)}")
         except Exception as e:
             logger.error(f"レポート設定モーダル表示失敗: {e}", exc_info=True)
