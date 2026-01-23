@@ -204,9 +204,20 @@ class NotificationService:
         for uid in all_member_ids:
             try:
                 u_info = self.client.users_info(user=uid)
-                # real_nameがなければname、それもなければIDを表示
-                user_name_map[uid] = u_info["user"].get("real_name") or u_info["user"].get("name") or uid
-            except:
+                user_data = u_info["user"]
+                profile = user_data.get("profile", {})
+                
+                # 優先順位: 表示名(display_name) > 氏名(real_name) > アカウント名(name)
+                display_name = (
+                    profile.get("display_name") or 
+                    profile.get("real_name") or 
+                    user_data.get("real_name") or 
+                    user_data.get("name") or 
+                    uid
+                )
+                user_name_map[uid] = display_name
+            except Exception as e:
+                logger.warning(f"ユーザー情報の取得に失敗: {uid}, Error: {e}")
                 user_name_map[uid] = uid
         # ----------------------------------------
 
