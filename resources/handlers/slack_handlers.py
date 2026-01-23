@@ -75,12 +75,18 @@ def should_process_message(event) -> bool:
     if ATTENDANCE_CHANNEL_ID and channel != ATTENDANCE_CHANNEL_ID:
         return False
     
-    # Bot自身が送った通知メッセージを除外
-    if text.startswith(("勤怠連絡:", "✅", "ⓘ")):
-        return False
+
         
     # 挨拶のみのメッセージを除外
     if not _is_likely_attendance_message(text):
+        return False
+
+    if (
+        event.get("bot_id") or 
+        event.get("subtype") or 
+        not event.get("user") or 
+        not (event.get("text") or "").strip()
+    ):
         return False
     
     return True
