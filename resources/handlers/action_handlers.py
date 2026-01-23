@@ -498,7 +498,8 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
             view = create_add_group_modal()
             
             # Cloud Run制約対応: views.pushを先に実行
-            client.views_push(view_id=body["view"]["id"], view=view)
+            # client.views_push(view_id=body["view"]["id"], view=view)
+            client.views_push(trigger_id=body["trigger_id"], view=view)
             logger.info("グループ追加モーダル表示(v2.22)")
             
             # Cloud Run制約対応: 最後にack()
@@ -551,7 +552,8 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                 )
                 
                 # Cloud Run制約対応: views.pushを先に実行
-                client.views_push(view_id=body["view"]["id"], view=view)
+                # client.views_push(view_id=body["view"]["id"], view=view)
+                client.views_push(trigger_id=body["trigger_id"], view=view)
                 logger.info(f"編集モーダル表示(v2.22): {group_id}")
                 
             elif action_type == "delete":
@@ -569,7 +571,8 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                 )
                 
                 # Cloud Run制約対応: views.pushを先に実行
-                client.views_push(view_id=body["view"]["id"], view=view)
+                # client.views_push(view_id=body["view"]["id"], view=view)
+                client.views_push(trigger_id=body["trigger_id"], view=view)
                 logger.info(f"削除確認モーダル表示(v2.22): {group_id}")
             
             # Cloud Run制約対応: 最後にack()
