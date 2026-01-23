@@ -244,34 +244,45 @@ class NotificationService:
                 "text": {"type": "mrkdwn", "text": f"*{group_name}*"}
             })
             
-            # --- 【修正】メンションを飛ばさないように書き換え ---
             if not member_ids:
-                content_text = "_メンバーが登録されていません_"
-            else:
-                records = []
-                for user_id in member_ids:
-                    record = self.attendance_service.get_specific_date_record(workspace_id, user_id, date_str)
-                    if record:
-                        records.append(record)
-                
-                if not records:
-                    content_text = "_勤怠連絡はありません_"
-                else:
-                    records.sort(key=lambda x: x.get('status', ''))
-                    lines = []
-                    for r in records:
-                        # <@ID> ではなくキャッシュした user_name_map から名前を取得
-                        display_name = user_name_map.get(r['user_id'], r['user_id'])
-                        status_name = STATUS_TRANSLATION.get(r['status'], r['status'])
-                        note = f" ({r['note']})" if r.get('note') else ""
-                        lines.append(f"• {display_name} - *{status_name}*{note}")
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "_メンバーが登録されていません_"}
+                })
+                continue
+
+            # --- 区分ごとにデータを集計 ---
+            # status_map = { "late": ["名前 (備考)", "名前"], "vacation": ["名前"] }
+            status_map = {}
+            for user_id in member_ids:
+                record = self.attendance_service.get_specific_date_record(workspace_id, user_id, date_str)
+                if record:
+                    st = record.get('status', 'other')
+                    display_name = user_name_map.get(user_id, user_id)
+                    note = f" ({record['note']})" if record.get('note') else ""
                     
-                    content_text = "\n".join(lines)
-            
-            blocks.append({
-                "type": "context", 
-                "elements": [{"type": "mrkdwn", "text": content_text}]
-            })
+                    if st not in status_map:
+                        status_map[st] = []
+                    status_map[st].append(f"• {display_name}{note}")
+
+            if not status_map:
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "_勤怠連絡はありません_"}
+                })
+            else:
+                # 区分（遅刻、休暇など）ごとにブロックを作成
+                # STATUS_TRANSLATION の定義順に表示されます
+                for st_key, st_label in STATUS_TRANSLATION.items():
+                    if st_key in status_map:
+                        # 区分名を太字にして、その下に名前を並べる
+                        content_text = f"*{st_label}*\n" + "\n".join(status_map[st_key])
+                        
+                        # context ではなく section を使うことで文字が普通サイズになります
+                        blocks.append({
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": content_text}
+                        })
 
         # 6. メッセージ送信（全参加チャンネル対応）
         try:
