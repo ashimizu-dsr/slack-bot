@@ -94,6 +94,7 @@ def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
         - 打ち消し線 (~text~) は前処理で "(strike-through: text)" に変換
         - 複数日の記録にも対応（_additional_attendances に格納）
     """
+    logger.info(f"DEBUG_AI_INPUT: [{text}] (type: {type(text)})")
     api_key = os.getenv("OPENAI_API_KEY")
     if not text or not api_key or not OpenAI:
         logger.warning("AI抽出がスキップされました（API_KEYまたはテキストが空）")
