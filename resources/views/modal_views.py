@@ -975,7 +975,7 @@ def create_admin_settings_modal(admin_ids: List[str] = None, groups: List[Dict[s
     # 4. 追加ボタン
     blocks.append({
         "type": "section",
-        "text": {"type": "mrkdwn", "text": "*➕ 新しいグループを追加*"},
+        "text": {"type": "mrkdwn", "text": "*+ 新しいグループを追加*"},
         "accessory": {
             "type": "button",
             "text": {"type": "plain_text", "text": "追加", "emoji": True},
