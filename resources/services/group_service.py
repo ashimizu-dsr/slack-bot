@@ -184,6 +184,43 @@ class GroupService:
             logger.error(f"グループメンバー更新失敗: {e}", exc_info=True)
             raise
 
+    def update_group_name(self, workspace_id: str, group_id: str, name: str) -> None:
+        """
+        グループ名を更新します（v2.22で追加）。
+        
+        Args:
+            workspace_id: Slackワークスペースの一意ID
+            group_id: グループの一意ID
+            name: 新しいグループ名
+            
+        Raises:
+            ValidationError: グループが存在しない場合、またはグループ名が空の場合
+        """
+        if not name or not name.strip():
+            raise ValidationError("グループ名が空です", "⚠️ グループ名を入力してください。")
+        
+        try:
+            group_ref = self.db.collection("groups").document(workspace_id)\
+                                .collection("groups").document(group_id)
+            
+            # 存在確認
+            if not group_ref.get().exists:
+                raise ValidationError(
+                    f"グループが存在しません: {group_id}",
+                    "⚠️ 指定されたグループが見つかりません。"
+                )
+            
+            group_ref.update({
+                "name": name.strip(),
+                "updated_at": firestore.SERVER_TIMESTAMP
+            })
+            logger.info(f"グループ名更新成功: {group_id}, Name={name}")
+        except ValidationError:
+            raise
+        except Exception as e:
+            logger.error(f"グループ名更新失敗: {e}", exc_info=True)
+            raise
+
     def find_group_by_name(self, workspace_id: str, name: str) -> Optional[Dict[str, Any]]:
         """
         グループ名でグループを検索します（v2.1で追加）。
@@ -221,16 +258,29 @@ class GroupService:
 
     def delete_group(self, workspace_id: str, group_id: str) -> None:
         """
-        グループを削除します。
+        グループを削除します（v2.22で実装）。
         
         Args:
             workspace_id: Slackワークスペースの一意ID
-            group_id: グループの一意ID
+            group_id: グループの一意ID（UUID）
             
         Note:
-            v2.0では未実装（v2.2で追加予定）
+            v2.22で正式実装されました。
         """
-        raise NotImplementedError("グループ削除機能はv2.2で実装予定です。")
+        try:
+            group_ref = self.db.collection("groups").document(workspace_id)\
+                                .collection("groups").document(group_id)
+            
+            # 存在確認
+            if not group_ref.get().exists:
+                logger.warning(f"削除対象グループが存在しません（スキップ）: {group_id}")
+                return
+            
+            group_ref.delete()
+            logger.info(f"グループ削除成功: {group_id}")
+        except Exception as e:
+            logger.error(f"グループ削除失敗: {e}", exc_info=True)
+            raise
 
     # ==========================================
     # v2.2: name-as-id方式のメソッド群

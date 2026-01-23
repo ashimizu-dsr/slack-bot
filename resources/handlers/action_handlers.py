@@ -489,23 +489,28 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
         「追加」ボタンのハンドラー（v2.22）。
         
         views.pushでグループ追加モーダルを表示します。
-        """
-        ack()
         
+        Note:
+            Cloud Run制約対応のため、views.pushを先に実行してからack()を呼びます。
+        """
         try:
             # 追加モーダルを生成
             view = create_add_group_modal()
             
-            # views.pushで表示
+            # Cloud Run制約対応: views.pushを先に実行
             client.views_push(view_id=body["view"]["id"], view=view)
             logger.info("グループ追加モーダル表示(v2.22)")
+            
+            # Cloud Run制約対応: 最後にack()
+            ack()
         except Exception as e:
             logger.error(f"グループ追加モーダル表示失敗: {e}", exc_info=True)
+            ack()
 
     # ==========================================
     # 10. v2.22: オーバーフローメニュー（...）押下
     # ==========================================
-    @app.action("group_actions_*")
+    @app.action("group_overflow_action")
     def handle_group_overflow_menu(ack, body, client):
         """
         オーバーフローメニュー（...）のハンドラー（v2.22）。
@@ -513,8 +518,10 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
         action_value:
           - "edit_{group_id}": 編集モーダルをpush
           - "delete_{group_id}": 削除確認モーダルをpush
+          
+        Note:
+            Cloud Run制約対応のため、views.pushを先に実行してからack()を呼びます。
         """
-        ack()
         workspace_id = body["team"]["id"]
         
         try:
@@ -534,6 +541,7 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                 
                 if not group:
                     logger.error(f"グループが見つかりません: {group_id}")
+                    ack()
                     return
                 
                 view = create_edit_group_modal(
@@ -542,6 +550,7 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                     member_ids=group.get("member_ids", [])
                 )
                 
+                # Cloud Run制約対応: views.pushを先に実行
                 client.views_push(view_id=body["view"]["id"], view=view)
                 logger.info(f"編集モーダル表示(v2.22): {group_id}")
                 
@@ -551,6 +560,7 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                 
                 if not group:
                     logger.error(f"グループが見つかりません: {group_id}")
+                    ack()
                     return
                 
                 view = create_delete_confirm_modal(
@@ -558,8 +568,13 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                     group_name=group["name"]
                 )
                 
+                # Cloud Run制約対応: views.pushを先に実行
                 client.views_push(view_id=body["view"]["id"], view=view)
                 logger.info(f"削除確認モーダル表示(v2.22): {group_id}")
+            
+            # Cloud Run制約対応: 最後にack()
+            ack()
                 
         except Exception as e:
             logger.error(f"オーバーフローメニュー処理失敗: {e}", exc_info=True)
+            ack()
