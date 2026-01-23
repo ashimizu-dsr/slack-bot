@@ -891,35 +891,6 @@ def create_admin_settings_modal(admin_ids: List[str] = None, groups: List[Dict[s
     
     このモーダルはグループを一覧形式で表示し、オーバーフローメニュー（...）から
     個別に編集・削除できる機能を提供します。
-    
-    Args:
-        admin_ids: 現在の管理者（通知先）のユーザーID配列
-        groups: 既存グループデータの配列
-            [
-                {"group_id": "group_abc", "name": "1課", "member_ids": ["U001", "U002"]},
-                ...
-            ]
-        
-    Returns:
-        Slack モーダルビューの辞書
-        
-    Note:
-        - グループが0件の場合は「まだグループが登録されていません」を表示
-        - 各グループにオーバーフローメニュー（...）を配置
-        - 追加ボタンから views.push で追加モーダルを表示
-        
-    Example:
-        # 新規（グループなし）
-        view = create_admin_settings_modal()
-        
-        # 既存データを表示
-        view = create_admin_settings_modal(
-            admin_ids=["U001"],
-            groups=[
-                {"group_id": "group_abc", "name": "1課", "member_ids": ["U002", "U003"]},
-                {"group_id": "group_def", "name": "2課", "member_ids": ["U004"]}
-            ]
-        )
     """
     if admin_ids is None:
         admin_ids = []
@@ -938,7 +909,10 @@ def create_admin_settings_modal(admin_ids: List[str] = None, groups: List[Dict[s
     }
     
     if admin_ids:
-        admin_element["initial_users"] = admin_ids
+        # 無効なIDが混じっているとエラーになるためクレンジング
+        valid_admin_ids = [uid for uid in admin_ids if uid and isinstance(uid, str)]
+        if valid_admin_ids:
+            admin_element["initial_users"] = valid_admin_ids
     
     blocks.append({
         "type": "input",
@@ -976,7 +950,7 @@ def create_admin_settings_modal(admin_ids: List[str] = None, groups: List[Dict[s
                 },
                 "accessory": {
                     "type": "overflow",
-                    "action_id": f"group_actions_{i}",
+                    "action_id": "group_overflow_action",  # 【修正箇所】固定値に変更
                     "options": [
                         {
                             "text": {"type": "plain_text", "text": "🔄 編集", "emoji": True},
