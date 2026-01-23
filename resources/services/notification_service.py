@@ -191,10 +191,25 @@ class NotificationService:
         
         if not all_groups:
             logger.warning(f"グループが設定されていません: Workspace={workspace_id}")
-            # 旧方式へのフォールバック
-            self._send_daily_report_legacy(date_str, workspace_id)
             return
+
+        # --- 【追加】名前表示用のキャッシュを作成 ---
+        # 全グループに所属する全メンバーのIDを抽出
+        all_member_ids = set()
+        for g in all_groups:
+            all_member_ids.update(g.get("member_ids", []))
         
+        # IDから名前(real_name)への変換マップを作成
+        user_name_map = {}
+        for uid in all_member_ids:
+            try:
+                u_info = self.client.users_info(user=uid)
+                # real_nameがなければname、それもなければIDを表示
+                user_name_map[uid] = u_info["user"].get("real_name") or u_info["user"].get("name") or uid
+            except:
+                user_name_map[uid] = uid
+        # ----------------------------------------
+
         # 5. レポートブロックの構築
         blocks = []
         if mention_text:
@@ -218,62 +233,56 @@ class NotificationService:
                 "text": {"type": "mrkdwn", "text": f"*{group_name}*"}
             })
             
+            # --- 【修正】メンションを飛ばさないように書き換え ---
             if not member_ids:
                 content_text = "_メンバーが登録されていません_"
             else:
-                # 各メンバーの勤怠記録を取得
                 records = []
                 for user_id in member_ids:
-                    record = self.attendance_service.get_specific_date_record(
-                        workspace_id, user_id, date_str
-                    )
+                    record = self.attendance_service.get_specific_date_record(workspace_id, user_id, date_str)
                     if record:
                         records.append(record)
                 
                 if not records:
                     content_text = "_勤怠連絡はありません_"
                 else:
-                    # ステータスでソート
                     records.sort(key=lambda x: x.get('status', ''))
-                    lines = [
-                        f"• <@{r['user_id']}> - *{STATUS_TRANSLATION.get(r['status'], r['status'])}*"
-                        f"{f' ({r['note']})' if r.get('note') else ''}" 
-                        for r in records
-                    ]
+                    lines = []
+                    for r in records:
+                        # <@ID> ではなくキャッシュした user_name_map から名前を取得
+                        display_name = user_name_map.get(r['user_id'], r['user_id'])
+                        status_name = STATUS_TRANSLATION.get(r['status'], r['status'])
+                        note = f" ({r['note']})" if r.get('note') else ""
+                        lines.append(f"• {display_name} - *{status_name}*{note}")
+                    
                     content_text = "\n".join(lines)
             
             blocks.append({
                 "type": "context", 
                 "elements": [{"type": "mrkdwn", "text": content_text}]
             })
-        
-        # 6. メッセージ送信
+
+        # 6. メッセージ送信（全参加チャンネル対応）
         try:
             # Botが参加しているチャンネルをすべて取得
             joined_channels = self._get_bot_joined_channels()
             
             if joined_channels:
-                # 見つかったすべてのチャンネルに対してループで送信
                 for channel_id in joined_channels:
-                    try:
-                        self.client.chat_postMessage(
-                            channel=channel_id, 
-                            blocks=blocks, 
-                            text=f"{title_date}の勤怠一覧"
-                        )
-                        logger.info(f"レポート送信成功（チャンネル）: {channel_id}")
-                    except Exception as e:
-                        logger.error(f"チャンネル {channel_id} への送信失敗: {e}")
-            
-            # もしどこのチャンネルにも参加していない場合のみ、管理者にDM（バックアップ）
+                    self.client.chat_postMessage(
+                        channel=channel_id, 
+                        blocks=blocks, 
+                        text=f"{title_date}の勤怠一覧"
+                    )
+                    logger.info(f"レポート送信成功: {channel_id}")
             else:
-                logger.warning("Botが参加しているチャンネルがないため、管理者にDM送信します。")
+                # どこにも参加していない場合は管理者にDM
                 for admin_id in admin_ids:
-                    # （ここに従来のDM送信ロジック...）
-                    pass
+                    dm = self.client.conversations_open(users=admin_id)
+                    self.client.chat_postMessage(channel=dm["channel"]["id"], blocks=blocks)
 
         except Exception as e:
-            logger.error(f"レポート送信プロセス全体でエラー: {e}", exc_info=True)
+            logger.error(f"送信エラー: {e}")
         
         total_end = time.time()
         logger.info(f"レポート送信処理完了 所要時間: {total_end - start_time:.4f}秒")
