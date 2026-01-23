@@ -885,7 +885,7 @@ def create_member_settings_modal_v2(
 # 6. レポート設定モーダル v2.22（一覧表示 + views.push版）
 # ==========================================
 
-def create_admin_settings_modal(admin_ids: List[str] = None, groups: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+def create_admin_settings_modal(admin_ids: List[str] = None, groups: List[Dict[str, Any]] = None, user_name_map: Dict[str, str] = None) -> Dict[str, Any]:
     """
     レポート設定モーダル（一覧表示）を生成します（v2.22）。
     
@@ -933,12 +933,21 @@ def create_admin_settings_modal(admin_ids: List[str] = None, groups: List[Dict[s
     })
     
     blocks.append({"type": "divider"})
+
+    if user_name_map is None:
+        user_name_map = {}
     
     # 3. グループ一覧
     if groups:
         for i, group in enumerate(groups, 1):
-            # メンバーをメンション形式で表示
-            members_text = ", ".join([f"<@{uid}>" for uid in group.get("member_ids", [])])
+            # --- 【修正箇所】メンション <@uid> をやめて表示名にする ---
+            member_names = []
+            for uid in group.get("member_ids", []):
+                name = user_name_map.get(uid, uid) # マップにあれば名前、なければID
+                member_names.append(name)
+            
+            members_text = ", ".join(member_names)
+
             if not members_text:
                 members_text = "（メンバーなし）"
             
