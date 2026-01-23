@@ -507,16 +507,16 @@ def register_action_handlers(app, attendance_service, notification_service, disp
                     user_name_map = {u["id"]: u["real_name"] or u["name"] for u in users_data["members"] if u["id"] in all_uids}
             except Exception as e:
                 logger.error(f"Failed to fetch user list: {e}")
-            
-            # モーダルを生成（v2.22版）
-            view = create_admin_settings_modal(admin_ids=admin_ids, groups=groups)
-            
+
             # モーダルを生成（user_name_mapを渡す）
             view = create_admin_settings_modal(
                 admin_ids=admin_ids, 
                 groups=groups, 
                 user_name_map=user_name_map
             )
+            
+            # モーダルを生成（v2.22版）
+            client.views_open(trigger_id=body["trigger_id"], view=view)
             
             logger.info(f"レポート設定モーダル表示(v2.22): Workspace={workspace_id}, Groups={len(groups)}")
         except Exception as e:
