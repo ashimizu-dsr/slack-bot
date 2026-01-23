@@ -63,6 +63,7 @@ class NotificationService:
             # 1. 削除通知の場合
             if is_delete:
                 user_id = record.user_id if hasattr(record, 'user_id') else record.get('user_id')
+                display_name = self._get_display_name(user_id)
                 date_val = record.date if hasattr(record, 'date') else record.get('date')
                 self.client.chat_postMessage(
                     channel=channel,
@@ -70,7 +71,7 @@ class NotificationService:
                     text=f"勤怠連絡を取り消しました: {date_val}",
                     blocks=[{
                         "type": "context",
-                        "elements": [{"type": "mrkdwn", "text": f"ⓘ <@{user_id}> さんの {date_val} の勤怠連絡を取り消しました"}]
+                        "elements": [{"type": "mrkdwn", "text": f"ⓘ {display_name} さんの {date_val} の勤怠連絡を取り消しました"}]
                     }]
                 )
                 logger.info(f"削除通知を送信しました: User={user_id}, Date={date_val}")
@@ -83,7 +84,9 @@ class NotificationService:
                 show_buttons=True
             )
             
-            msg_text = "勤怠記録を更新しました" if is_update else "勤怠を記録しました"
+            # msg_text = "勤怠記録を更新しました" if is_update else "勤怠を記録しました"
+            action_label = "更新" if is_update else "記録"
+            msg_text = f"ⓘ *{display_name}* さんの勤怠連絡を{action_label}しました"
             
             self.client.chat_postMessage(
                 channel=channel,
@@ -397,3 +400,12 @@ class NotificationService:
 
             except Exception as e:
                 logger.error(f"チャンネル {channel_id} へのレポート送信失敗: {e}", exc_info=True)
+
+    def _get_display_name(self, user_id):
+        """ユーザーIDから表示名を取得する内部メソッド"""
+        try:
+            res = self.client.users_info(user=user_id)
+            profile = res["user"].get("profile", {})
+            return profile.get("display_name") or profile.get("real_name") or res["user"].get("name") or user_id
+        except Exception:
+            return user_id
