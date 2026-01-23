@@ -78,6 +78,9 @@ class NotificationService:
                 return
 
             # 2. 記録・更新通知の場合
+            user_id = record.user_id if hasattr(record, 'user_id') else record.get('user_id')
+            display_name = self._get_display_name(user_id)
+            
             blocks = create_attendance_card_blocks(
                 record, 
                 is_update=is_update,
@@ -95,7 +98,6 @@ class NotificationService:
                 text=msg_text
             )
             
-            user_id = record.user_id if hasattr(record, 'user_id') else record.get('user_id')
             date_val = record.date if hasattr(record, 'date') else record.get('date')
             logger.info(f"勤怠カードを送信しました: User={user_id}, Date={date_val}, Update={is_update}")
             
@@ -402,10 +404,34 @@ class NotificationService:
                 logger.error(f"チャンネル {channel_id} へのレポート送信失敗: {e}", exc_info=True)
 
     def _get_display_name(self, user_id):
-        """ユーザーIDから表示名を取得する内部メソッド"""
+        """
+        ユーザーIDから表示名を取得する内部メソッド。
+        
+        Args:
+            user_id: SlackユーザーID
+            
+        Returns:
+            表示名（優先順位: display_name > real_name > user_id）
+            
+        Note:
+            user.get("name")（英数字ID）は使用しません。
+        """
         try:
             res = self.client.users_info(user=user_id)
             profile = res["user"].get("profile", {})
-            return profile.get("display_name") or profile.get("real_name") or res["user"].get("name") or user_id
-        except Exception:
+            
+            # 優先順位: 1. display_name, 2. real_name, 3. user_id
+            display_name = profile.get("display_name", "").strip()
+            if display_name:
+                return display_name
+            
+            real_name = profile.get("real_name", "").strip()
+            if real_name:
+                return real_name
+            
+            # どちらもない場合はuser_idをそのまま返す
+            return user_id
+            
+        except Exception as e:
+            logger.warning(f"ユーザー名取得失敗: {user_id}, {e}")
             return user_id
