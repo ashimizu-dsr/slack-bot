@@ -2,8 +2,8 @@
 Slack勤怠管理Bot - メインエントリポイント
 
 このモジュールは、Google Cloud Run/Functions上で動作するSlack Botの
-エントリポイントです。HTTPリクエストを受け取り、Slackイベントまたは
-Cloud Schedulerからのジョブリクエストを処理します。
+エントリポイントです。HTTPリクエストを受け取り、Slackイベント、
+Pub/Subからの非同期処理、またはCloud Schedulerからのジョブリクエストを処理します。
 """
 import sys
 import os
@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 try:
     from slack_bolt import App
     from slack_bolt.adapter.google_cloud_functions import SlackRequestHandler
+    from slack_sdk import WebClient
     print("DEBUG: slack_bolt imported", file=sys.stderr)
 except Exception as e:
     print(f"DEBUG: Import error: {e}", file=sys.stderr)
@@ -37,7 +38,19 @@ from resources.shared.setup_logger import setup_logger
 from resources.shared.db import init_db
 from resources.services.attendance_service import AttendanceService
 from resources.services.notification_service import NotificationService
-from resources.handlers import register_all_handlers 
+from resources.handlers import register_all_handlers
+
+# Pub/Sub関連のインポート（オプション）
+PUBSUB_ENABLED = os.environ.get("ENABLE_PUBSUB", "false").lower() == "true"
+
+if PUBSUB_ENABLED:
+    try:
+        from resources.handlers.interaction_dispatcher import InteractionDispatcher
+        from resources.handlers.interaction_processor import InteractionProcessor, create_pubsub_endpoint
+        print("DEBUG: Pub/Sub modules imported", file=sys.stderr)
+    except Exception as e:
+        print(f"DEBUG: Pub/Sub import error: {e}", file=sys.stderr)
+        PUBSUB_ENABLED = False
 
 # ==========================================
 # 初期化
@@ -60,10 +73,28 @@ app = App(
 attendance_service = AttendanceService()
 notification_service = NotificationService(app.client, attendance_service)
 
-# 4. ハンドラーの登録
-register_all_handlers(app, attendance_service, notification_service)
+# 4. Pub/Sub関連の準備（有効な場合）
+dispatcher = None
+processor = None
 
-# 5. Google Cloud Functions/Run 用のハンドラー
+if PUBSUB_ENABLED:
+    try:
+        dispatcher = InteractionDispatcher()
+        processor = InteractionProcessor(
+            slack_client=WebClient(token=os.environ.get("SLACK_BOT_TOKEN")),
+            attendance_service=attendance_service,
+            notification_service=notification_service
+        )
+        logger.info("Pub/Sub機能が有効化されました")
+    except Exception as e:
+        logger.error(f"Pub/Sub初期化失敗: {e}", exc_info=True)
+        dispatcher = None
+        processor = None
+
+# 5. ハンドラーの登録
+register_all_handlers(app, attendance_service, notification_service, dispatcher=dispatcher)
+
+# 6. Google Cloud Functions/Run 用のハンドラー
 handler = SlackRequestHandler(app)
 
 # ==========================================
@@ -72,7 +103,7 @@ handler = SlackRequestHandler(app)
 
 def slack_bot(request):
     """
-    HTTPリクエストを受け取り、パスに応じてSlack処理か定期ジョブかを分岐させます。
+    HTTPリクエストを受け取り、パスに応じて処理を分岐させます。
     
     Args:
         request: Google Cloud RunのHTTPリクエストオブジェクト
@@ -83,6 +114,7 @@ def slack_bot(request):
     Note:
         パスによる分岐:
         - "/job/report": Cloud Schedulerからの日次レポート実行リクエスト
+        - "/pubsub/interactions": Pub/Subからのプッシュリクエスト（非同期処理）
         - それ以外: Slackイベント（メッセージ、ボタン、ショートカットなど）
     """
     
@@ -90,13 +122,11 @@ def slack_bot(request):
     path = request.path
     
     # 1. Cloud Schedulerからのレポート実行リクエスト
-    # Schedulerの設定で URL を https://[YOUR-URL]/job/report に設定してください
     if path == "/job/report":
         logger.info("Cloud Scheduler triggered: Starting daily report...")
         
         try:
             # 日本時間 (JST) の日付を取得
-            # Cloud Runのシステム時間はUTCのため、+9時間して日付を確定させる
             from datetime import timezone, timedelta
             JST = timezone(timedelta(hours=9))
             today_str = datetime.datetime.now(JST).date().isoformat()
@@ -114,7 +144,18 @@ def slack_bot(request):
         except Exception as e:
             logger.error(f"Failed to send daily report: {e}", exc_info=True)
             return f"Internal Server Error: {e}", 500
+    
+    # 2. Pub/Subからのプッシュリクエスト（非同期処理）
+    if path == "/pubsub/interactions" and PUBSUB_ENABLED and processor:
+        logger.info("Pub/Sub push request received")
+        
+        try:
+            pubsub_handler = create_pubsub_endpoint(app, processor)
+            response, status = pubsub_handler(request)
+            return response, status
+        except Exception as e:
+            logger.error(f"Pub/Sub処理失敗: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}, 500
 
-    # 2. 通常のSlackイベント（メッセージ、ボタン、ショートカット等）
-    # path が "/" やそれ以外の場合はすべて Bolt 側へ渡す
+    # 3. 通常のSlackイベント（メッセージ、ボタン、ショートカット等）
     return handler.handle(request)

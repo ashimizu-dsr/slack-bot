@@ -17,15 +17,23 @@ from .modal_handlers import register_modal_handlers, register_modal_handlers_v22
 # from .command_handlers import register_command_handlers
 # from .shortcut_handlers import register_shortcut_handlers
 
-def register_all_handlers(app, attendance_service, notification_service):
+def register_all_handlers(app, attendance_service, notification_service, dispatcher=None):
     """
     全てのハンドラーを登録します。
-    マルチワークスペース対応のため、各ハンドラー内では 
-    引数から渡される context や client を優先的に使用します。
+    
+    Args:
+        app: Slack Bolt Appインスタンス
+        attendance_service: AttendanceServiceインスタンス
+        notification_service: NotificationServiceインスタンス
+        dispatcher: InteractionDispatcherインスタンス（Pub/Sub非同期処理用、オプション）
+    
+    Note:
+        マルチワークスペース対応のため、各ハンドラー内では 
+        引数から渡される context や client を優先的に使用します。
     """
     
     # 1. 勤怠提出（ボタンクリック等）
-    register_action_handlers(app, attendance_service, notification_service)
+    register_action_handlers(app, attendance_service, notification_service, dispatcher=dispatcher)
     
     # 2. モーダル操作（勤怠編集・保存、設定保存）
     register_modal_handlers(app, attendance_service, notification_service)

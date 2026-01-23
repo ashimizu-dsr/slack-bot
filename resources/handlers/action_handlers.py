@@ -24,7 +24,7 @@ from resources.shared.db import (
 logger = logging.getLogger(__name__)
 
 
-def register_action_handlers(app, attendance_service, notification_service) -> None:
+def register_action_handlers(app, attendance_service, notification_service, dispatcher=None) -> None:
     """
     アクション関連のハンドラーをSlack Appに登録します。
     
@@ -32,6 +32,7 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
         app: Slack Bolt Appインスタンス
         attendance_service: AttendanceServiceインスタンス
         notification_service: NotificationServiceインスタンス
+        dispatcher: InteractionDispatcherインスタンス（非同期処理用、オプション）
     """
 
     # ==========================================
@@ -133,9 +134,29 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
         """
         削除確認モーダルの「削除する」ボタン押下時の処理。
         
-        実際の削除を実行し、元のメッセージを更新します。
+        非同期処理対応:
+        - dispatcherが提供されている場合、Pub/Sub経由で処理
+        - 提供されていない場合、同期処理
         """
         ack()
+        
+        # 非同期処理が有効な場合
+        if dispatcher:
+            try:
+                dispatcher.dispatch(body, "delete_attendance_confirm")
+                logger.info("削除リクエストをキューに投げました（非同期）")
+            except Exception as e:
+                logger.error(f"非同期ディスパッチ失敗、同期処理にフォールバック: {e}", exc_info=True)
+                # フォールバック: 同期処理
+                _delete_attendance_sync(body, client, view, attendance_service)
+        else:
+            # 同期処理
+            _delete_attendance_sync(body, client, view, attendance_service)
+    
+    def _delete_attendance_sync(body, client, view, attendance_service):
+        """
+        勤怠削除の同期処理（内部関数）
+        """
         user_id = body["user"]["id"]
         workspace_id = body["team"]["id"]
         metadata = json.loads(view.get("private_metadata", "{}"))
@@ -154,7 +175,7 @@ def register_action_handlers(app, attendance_service, notification_service) -> N
                 }],
                 text="勤怠を取り消しました"
             )
-            logger.info(f"削除成功: User={user_id}, Date={metadata['date']}")
+            logger.info(f"削除成功（同期）: User={user_id}, Date={metadata['date']}")
         except Exception as e:
             logger.error(f"取消処理失敗: {e}", exc_info=True)
 
