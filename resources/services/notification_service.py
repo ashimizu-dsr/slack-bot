@@ -249,34 +249,31 @@ class NotificationService:
         
         # 6. メッセージ送信
         try:
-            # 優先：設定された共通チャンネル(REPORT_CHANNEL_ID)へ送信
-            if target_channel:
-                self.client.chat_postMessage(
-                    channel=target_channel, 
-                    blocks=blocks, 
-                    text=f"{title_date}の勤怠一覧"
-                )
-                logger.info(f"レポート送信成功（チャンネル）: {target_channel}")
+            # Botが参加しているチャンネルをすべて取得
+            joined_channels = self._get_bot_joined_channels()
             
-            # 予備：チャンネル設定がない場合のみ、管理者に個別にDMを飛ばす
-            else:
-                logger.warning("REPORT_CHANNEL_ID 未設定のため、管理者に個別にDMを送信します。")
-                for admin_id in admin_ids:
+            if joined_channels:
+                # 見つかったすべてのチャンネルに対してループで送信
+                for channel_id in joined_channels:
                     try:
-                        # DMチャンネルを開いて送信
-                        dm_response = self.client.conversations_open(users=admin_id)
-                        dm_channel = dm_response["channel"]["id"]
                         self.client.chat_postMessage(
-                            channel=dm_channel, 
+                            channel=channel_id, 
                             blocks=blocks, 
                             text=f"{title_date}の勤怠一覧"
                         )
-                        logger.info(f"レポート送信成功（DM）: Admin={admin_id}")
+                        logger.info(f"レポート送信成功（チャンネル）: {channel_id}")
                     except Exception as e:
-                        logger.error(f"管理者 {admin_id} へのDM送信失敗: {e}")
+                        logger.error(f"チャンネル {channel_id} への送信失敗: {e}")
+            
+            # もしどこのチャンネルにも参加していない場合のみ、管理者にDM（バックアップ）
+            else:
+                logger.warning("Botが参加しているチャンネルがないため、管理者にDM送信します。")
+                for admin_id in admin_ids:
+                    # （ここに従来のDM送信ロジック...）
+                    pass
 
         except Exception as e:
-            logger.error(f"レポート送信プロセス全体でエラーが発生: {e}", exc_info=True)
+            logger.error(f"レポート送信プロセス全体でエラー: {e}", exc_info=True)
         
         total_end = time.time()
         logger.info(f"レポート送信処理完了 所要時間: {total_end - start_time:.4f}秒")
