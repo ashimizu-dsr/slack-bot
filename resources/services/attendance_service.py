@@ -212,49 +212,50 @@ class AttendanceService:
         self, 
         workspace_id: str, 
         date_str: str, 
-        channel_id: str
-    ) -> Dict[str, List[Dict[str, Any]]]:
+        # 引数として groups と admin_ids を受け取れるようにするか、
+        # 内部で workspace_service を呼び出す形にします
+    ) -> Dict[str, Any]:
         """
-        日次レポート用のデータを課別に取得します。
+        日次レポート用のデータを「設定されたグループ」に基づいて取得します。
+        """
+        from services.workspace_service import WorkspaceService # 循環参照回避
+        ws_service = WorkspaceService()
         
-        Args:
-            workspace_id: Slackワークスペースの一意ID
-            date_str: 対象日（YYYY-MM-DD形式）
-            channel_id: チャンネルID（現状は未使用）
-            
-        Returns:
-            {セクションID: [{user_id, status, note}, ...]} の辞書
-            
-        Note:
-            各セクションに所属するメンバーの勤怠記録を集約します。
-            記録がないメンバーは含まれません。
-        """
-        report_data = {}
+        report_data = {
+            "groups": [],
+            "admin_ids": ws_service.get_admin_ids(workspace_id)
+        }
+
         try:
-            # メンバー設定を取得
-            section_user_map, _ = get_channel_members_with_section(workspace_id)
+            # 1. モーダルで設定したグループ一覧を取得
+            groups = ws_service.get_all_groups(workspace_id)
             
-            # その日の全記録を一括取得
+            # 2. その日の全勤怠記録を一括取得
             all_today_records = get_today_records(workspace_id, date_str)
             attendance_lookup = {r['user_id']: r for r in all_today_records}
 
-            # セクションごとにデータを構築
-            for section, user_ids in section_user_map.items():
-                report_data[section] = []
-                for u_id in user_ids:
+            # 3. グループごとにメンバーの勤怠を紐付け
+            for group in groups:
+                group_results = []
+                for u_id in group.get("member_ids", []):
                     if u_id in attendance_lookup:
                         record = attendance_lookup[u_id]
-                        report_data[section].append({
+                        group_results.append({
                             "user_id": u_id,
                             "status": record.get('status'),
                             "note": record.get('note') or ""
                         })
+                
+                # グループ名と結果を格納
+                report_data["groups"].append({
+                    "name": group["name"],
+                    "results": group_results
+                })
             
-            logger.info(f"レポートデータ取得成功: Date={date_str}, Workspace={workspace_id}")
             return report_data
         except Exception as e:
-            logger.error(f"レポートデータ一括取得失敗: {e}", exc_info=True)
-            return {}
+            logger.error(f"レポートデータ構築失敗: {e}", exc_info=True)
+            return {"groups": [], "admin_ids": []}
 
     def _validate_record(self, record: AttendanceRecord) -> None:
         """

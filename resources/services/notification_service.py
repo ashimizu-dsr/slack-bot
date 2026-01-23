@@ -113,7 +113,7 @@ class NotificationService:
         try:
             # Botが参加している公開チャンネルを一覧取得
             response = self.client.conversations_list(
-                types="public_channel", 
+                types="public_channel, private_channel",  # privateも追加
                 exclude_archived=True
             )
             joined_channels = [
@@ -152,6 +152,8 @@ class NotificationService:
         from resources.services.workspace_service import WorkspaceService
         workspace_service = WorkspaceService()
         admin_ids = workspace_service.get_admin_ids(workspace_id)
+
+        mention_text = " ".join([f"<@{uid}>" for uid in admin_ids]) if admin_ids else ""
         
         if not admin_ids:
             logger.warning(f"管理者が設定されていません: Workspace={workspace_id}")
@@ -159,16 +161,18 @@ class NotificationService:
             self._send_daily_report_legacy(date_str, workspace_id)
             return
         
-        # 2. 送信先チャンネルの決定
-        env_channel = os.environ.get("REPORT_CHANNEL_ID")
-        if env_channel:
-            target_channel = env_channel
-            logger.info(f"レポート送信先（環境変数指定）: {target_channel}")
+        # 2. 送信先チャンネルの自動決定
+        # まずBotが参加しているチャンネル一覧を取得
+        joined_channels = self._get_bot_joined_channels()
+        
+        if joined_channels:
+            # 参加している最初のチャンネルを送信先とする
+            target_channel = joined_channels[0]
+            logger.info(f"レポート送信先（自動判別）: {target_channel}")
         else:
-            # デフォルトでは最初の管理者とのDMに送信
-            # （実際のプロダクションでは特定チャンネルに送信することを推奨）
-            target_channel = None  # DMの場合はNoneのまま
-            logger.info(f"レポート送信先: 管理者DM（{len(admin_ids)}人）")
+            # どこにも参加していない場合は管理者にDM（バックアップ策）
+            target_channel = None
+            logger.warning("Botがどのチャンネルにも参加していないため、管理者DMへ送信します。")
         
         # 3. 日付タイトルの準備
         try:
@@ -192,11 +196,18 @@ class NotificationService:
             return
         
         # 5. レポートブロックの構築
-        blocks = [{
+        blocks = []
+        if mention_text:
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": mention_text}
+            })
+        
+        blocks.append({
             "type": "header", 
             "text": {"type": "plain_text", "text": f"{title_date}の勤怠一覧"}
-        }]
-        
+        })
+
         for group in all_groups:
             group_name = group.get("name", "不明なグループ")
             member_ids = group.get("member_ids", [])
@@ -238,23 +249,23 @@ class NotificationService:
         
         # 6. メッセージ送信
         try:
+            # 優先：設定された共通チャンネル(REPORT_CHANNEL_ID)へ送信
             if target_channel:
-                # チャンネルに送信
                 self.client.chat_postMessage(
                     channel=target_channel, 
                     blocks=blocks, 
                     text=f"{title_date}の勤怠一覧"
                 )
                 logger.info(f"レポート送信成功（チャンネル）: {target_channel}")
+            
+            # 予備：チャンネル設定がない場合のみ、管理者に個別にDMを飛ばす
             else:
-                # 各管理者にDMで送信
+                logger.warning("REPORT_CHANNEL_ID 未設定のため、管理者に個別にDMを送信します。")
                 for admin_id in admin_ids:
                     try:
-                        # DMチャンネルを開く
+                        # DMチャンネルを開いて送信
                         dm_response = self.client.conversations_open(users=admin_id)
                         dm_channel = dm_response["channel"]["id"]
-                        
-                        # レポート送信
                         self.client.chat_postMessage(
                             channel=dm_channel, 
                             blocks=blocks, 
@@ -262,9 +273,10 @@ class NotificationService:
                         )
                         logger.info(f"レポート送信成功（DM）: Admin={admin_id}")
                     except Exception as e:
-                        logger.error(f"管理者 {admin_id} へのDM送信失敗: {e}", exc_info=True)
+                        logger.error(f"管理者 {admin_id} へのDM送信失敗: {e}")
+
         except Exception as e:
-            logger.error(f"レポート送信失敗: {e}", exc_info=True)
+            logger.error(f"レポート送信プロセス全体でエラーが発生: {e}", exc_info=True)
         
         total_end = time.time()
         logger.info(f"レポート送信処理完了 所要時間: {total_end - start_time:.4f}秒")
