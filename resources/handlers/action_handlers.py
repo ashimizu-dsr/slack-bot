@@ -14,7 +14,8 @@ from resources.views.modal_views import (
     create_admin_settings_modal,
     create_add_group_modal,
     create_edit_group_modal,
-    create_delete_confirm_modal
+    create_attendance_delete_confirm_modal,
+    create_member_delete_confirm_modal
 )
 from resources.shared.db import (
     get_single_attendance_record, 
@@ -116,7 +117,7 @@ def register_action_handlers(app, attendance_service, notification_service, disp
                 logger.warning(f"権限エラー: User {user_id} が User {record.get('user_id')} の記録を削除しようとしました")
                 return
 
-            view = create_delete_confirm_modal(date) 
+            view = create_attendance_delete_confirm_modal(date) 
             # 呼び出し側(ハンドラー)で期待している callback_id に強制的に合わせる
             view["callback_id"] = "delete_attendance_confirm_callback"
             view["private_metadata"] = json.dumps({
@@ -614,7 +615,7 @@ def register_action_handlers(app, attendance_service, notification_service, disp
                     ack()
                     return
                 
-                view = create_delete_confirm_modal(
+                view = create_member_delete_confirm_modal(
                     group_id=group["group_id"],
                     group_name=group["name"]
                 )

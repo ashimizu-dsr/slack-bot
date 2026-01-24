@@ -325,7 +325,7 @@ def create_attendance_card_blocks(record: Any, **kwargs) -> List[Dict[str, Any]]
 # ==========================================
 # 5. エラー & 削除確認
 # ==========================================
-def create_delete_confirm_modal(date: str):
+def create_attendance_delete_confirm_modal(date: str):
     """
     勤怠記録削除の確認モーダルを生成します。
     
@@ -1088,7 +1088,7 @@ def create_edit_group_modal(group_id: str, group_name: str, member_ids: List[str
     }
 
 
-def create_delete_confirm_modal(group_id: str, group_name: str) -> Dict[str, Any]:
+def create_member_delete_confirm_modal(group_id: str, group_name: str) -> Dict[str, Any]:
     """
     削除確認モーダルを生成します（v2.22）。
     
