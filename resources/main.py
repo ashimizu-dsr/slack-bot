@@ -30,13 +30,24 @@ from google.cloud import firestore  # ← これを try の外、トップレベ
 
 import slack_bolt
 from slack_bolt import App
-from slack_bolt.oauth.oauth_settings import OAuthSettings
 
-# 2. 階層を辿らずに bolt の中から直接取り出す
-# これでも ModuleNotFoundError が出る場合は、ライブラリ自体が入っていません
-from slack_bolt.oauth.installation_store import InstallationStore
-from slack_bolt.oauth.models.bot import Bot
-from slack_bolt.oauth.models.installation import Installation
+# どこまで読み込めているかログに出す
+print(f"DEBUG: slack_bolt version: {slack_bolt.__version__}", file=sys.stderr)
+try:
+    from slack_bolt.oauth import OAuthSettings
+    print("DEBUG: OAuthSettings import success", file=sys.stderr)
+except Exception as e:
+    print(f"DEBUG: OAuthSettings import failed: {e}", file=sys.stderr)
+
+
+# from slack_bolt import App
+# from slack_bolt.oauth.oauth_settings import OAuthSettings
+
+# # 2. 階層を辿らずに bolt の中から直接取り出す
+# # これでも ModuleNotFoundError が出る場合は、ライブラリ自体が入っていません
+# from slack_bolt.oauth.installation_store import InstallationStore
+# from slack_bolt.oauth.models.bot import Bot
+# from slack_bolt.oauth.models.installation import Installation
 
 
 # # 1. 基本ライブラリのインポート
@@ -111,27 +122,16 @@ print(f"DEBUG: Installed packages: {installed_packages}", file=sys.stderr)
 # 1. ログとDBの準備
 setup_logger()
 init_db()
-
-# Firestoreクライアント作成
 db_client = firestore.Client()
 
-# 2. 保存ロジックの適用
-installation_store = MyFirestoreInstallationStore(client=db_client)
+# --- OAuth（自動保存）は一旦「使わない」設定にする ---
+# Installation などのクラスはインポートもしません。
+# その代わり、以前作った「DBからトークンを引くロジック」を活かします。
 
-# 3. OAuthの設定
-oauth_settings = OAuthSettings(
-    client_id=os.environ.get("SLACK_CLIENT_ID"),
-    client_secret=os.environ.get("SLACK_CLIENT_SECRET"),
-    scopes=["chat:write", "commands", "users:read", "groups:read", "channels:read"],
-    installation_store=installation_store,
-    install_path="/slack/install",
-    redirect_uri_path="/slack/oauth_redirect",
-)
-
-# 4. Appの初期化
+# 2. Appの初期化（OAuth設定を外し、以前の形に近づける）
 app = App(
     signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
-    oauth_settings=oauth_settings,
+    # tokenはここには書かず、各リスナー内で動的に取得します
     process_before_response=False
 )
 
