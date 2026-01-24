@@ -18,7 +18,7 @@ from resources.views.modal_views import (
 )
 from resources.shared.db import (
     get_single_attendance_record, 
-    get_channel_members_with_section
+    # get_channel_members_with_section
 )
 
 logger = logging.getLogger(__name__)
