@@ -277,7 +277,7 @@ def create_setup_message_blocks():
         }
     ]
 
-def create_attendance_card_blocks(record: Any, **kwargs) -> List[Dict[str, Any]]:
+def create_attendance_card_blocks(record: Any, display_name: str = None, **kwargs) -> List[Dict[str, Any]]:
     """
     勤怠記録カード（通知用）のBlock Kitブロックを生成します。
     
@@ -300,11 +300,14 @@ def create_attendance_card_blocks(record: Any, **kwargs) -> List[Dict[str, Any]]
     note_val = get_val(record, 'note')
 
     label = "を修正しました" if kwargs.get("is_update") else "を記録しました"
+
+    # もし display_name が渡されなかった時のためにバックアップロジックを用意
+    # name_to_show = display_name if display_name else f"<@{user_id}>"
     
     blocks = [
         {
             "type": "context",
-            "elements": [{"type": "mrkdwn", "text": f"ⓘ <@{user_id}> さんの勤怠連絡{label}"}]
+            "elements": [{"type": "mrkdwn", "text": f"ⓘ {display_name} さんの勤怠連絡{label}"}]
         },
         {
             "type": "section",

@@ -83,6 +83,7 @@ class NotificationService:
             
             blocks = create_attendance_card_blocks(
                 record, 
+                display_name=display_name,
                 is_update=is_update,
                 show_buttons=True
             )
