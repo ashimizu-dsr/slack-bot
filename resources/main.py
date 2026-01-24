@@ -27,16 +27,28 @@ logger = logging.getLogger(__name__)
 
 from google.cloud import firestore  # ← これを try の外、トップレベルに置く
 
-# 1. 基本ライブラリのインポート
-from google.cloud import firestore
+
+import slack_bolt
 from slack_bolt import App
 from slack_bolt.oauth.oauth_settings import OAuthSettings
-from slack_bolt.adapter.google_cloud_functions import SlackRequestHandler
-from slack_sdk import WebClient
 
-# 2. OAuth用のベースクラスをインポート（これらは確実に存在します）
-from slack_bolt.oauth.installation_store import InstallationStore, Installation
+# 2. 階層を辿らずに bolt の中から直接取り出す
+# これでも ModuleNotFoundError が出る場合は、ライブラリ自体が入っていません
+from slack_bolt.oauth.installation_store import InstallationStore
 from slack_bolt.oauth.models.bot import Bot
+from slack_bolt.oauth.models.installation import Installation
+
+
+# # 1. 基本ライブラリのインポート
+# from google.cloud import firestore
+# from slack_bolt import App
+# from slack_bolt.oauth.oauth_settings import OAuthSettings
+# from slack_bolt.adapter.google_cloud_functions import SlackRequestHandler
+# from slack_sdk import WebClient
+
+# # 2. OAuth用のベースクラスをインポート（これらは確実に存在します）
+# from slack_bolt.oauth.installation_store import InstallationStore, Installation
+# from slack_bolt.oauth.models.bot import Bot
 
 # ==========================================
 # 自前で定義する Firestore 保存クラス

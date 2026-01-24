@@ -1,6 +1,7 @@
 slack-bolt>=1.18.0
 google-cloud-firestore>=2.11.0
 functions-framework
-slack_sdk
+slack_sdk>=3.21.0
 openai
 python-dotenv
+flask>=2.0.0
