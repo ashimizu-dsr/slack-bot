@@ -25,16 +25,13 @@ if current_dir not in sys.path:
 logger = logging.getLogger(__name__)
 
 # Slack Bolt のインポート
-try:
-    from slack_bolt import App
-    from slack_bolt.oauth.oauth_settings import OAuthSettings
-    from slack_bolt.adapter.google_cloud_functions import SlackRequestHandler
-    from slack_bolt.adapter.firestore import FirestoreInstallationStore
-    from google.cloud import firestore
-    from slack_sdk import WebClient
-    print("DEBUG: slack_bolt imported", file=sys.stderr)
-except Exception as e:
-    print(f"DEBUG: Import error: {e}", file=sys.stderr)
+from slack_bolt import App
+from slack_bolt.oauth.oauth_settings import OAuthSettings
+from slack_bolt.adapter.google_cloud_functions import SlackRequestHandler
+from slack_bolt.adapter.firestore import FirestoreInstallationStore
+from slack_sdk import WebClient
+from google.cloud import firestore  # ← これを try の外、トップレベルに置く
+
 
 # 自作モジュールの読み込み
 from resources.shared.setup_logger import setup_logger
