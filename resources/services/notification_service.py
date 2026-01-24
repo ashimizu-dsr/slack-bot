@@ -163,7 +163,7 @@ class NotificationService:
         if not admin_ids:
             logger.warning(f"管理者が設定されていません: Workspace={workspace_id}")
             # 旧方式へのフォールバック（互換性のため）
-            self._send_daily_report_legacy(date_str, workspace_id)
+            # self._send_daily_report_legacy(date_str, workspace_id)
             return
         
         # 2. 送信先チャンネルの自動決定
@@ -417,6 +417,10 @@ class NotificationService:
             user.get("name")（英数字ID）は使用しません。
         """
         try:
+            # --- 追加: メンション形式 <@U123...> から IDのみを抽出 ---
+            if user_id and isinstance(user_id, str):
+                user_id = user_id.replace("<@", "").replace(">", "").split("|")[0]
+            # --------------------------------------------------
             res = self.client.users_info(user=user_id)
             profile = res["user"].get("profile", {})
             
