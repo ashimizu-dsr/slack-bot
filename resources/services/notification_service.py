@@ -439,3 +439,4 @@ class NotificationService:
         except Exception as e:
             logger.warning(f"ユーザー名取得失敗: {user_id}, {e}")
             return user_id
+            
