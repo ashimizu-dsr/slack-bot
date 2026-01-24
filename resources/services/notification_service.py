@@ -335,7 +335,7 @@ class NotificationService:
                 clean_user_id = user_id.replace("<@", "").replace(">", "").split("|")[0]
             
             # 2. Slack API呼び出し
-            res = self.client.users_info(user=user_id)
+            res = self.client.users_info(user=clean_user_id)
             if not res.get("ok"):
                 logger.warning(f"Slack API response not OK for user {clean_user_id}")
                 return user_id

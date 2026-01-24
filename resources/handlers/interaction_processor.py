@@ -75,25 +75,31 @@ class InteractionProcessor:
             view = body.get("view", {})
             metadata = json.loads(view.get("private_metadata", "{}"))
             
-            # 勤怠を削除
+            # 1. 勤怠を削除（ビジネスロジック）
             self.attendance_service.delete_attendance(
                 workspace_id=workspace_id,
                 user_id=user_id,
                 date=metadata["date"]
             )
+
+            # 2. NotificationService から表示名を取得（ここであのログが出るはずです！）
+            display_name = self.notification_service._get_display_name(user_id)
+            date_val = metadata["date"]
             
-            # メッセージを更新
+            # 3. メッセージを更新（chat_update）
+            # デザイン（blocks）は NotificationService の notify_attendance_change 内の 
+            # is_delete 時の構造に合わせています
             self.client.chat_update(
                 channel=metadata["channel_id"],
                 ts=metadata["message_ts"],
+                text=f"勤怠連絡を取り消しました: {date_val}",
                 blocks=[{
                     "type": "context",
                     "elements": [{
-                        "type": "mrkdwn",
-                        "text": f"ⓘ <@{user_id}>さんの {metadata['date']} の勤怠連絡を取り消しました"
+                        "type": "mrkdwn", 
+                        "text": f"ⓘ *{display_name}* さんの {date_val} の勤怠連絡を取り消しました"
                     }]
-                }],
-                text="勤怠を取り消しました"
+                }]
             )
             
             logger.info(f"削除成功: User={user_id}, Date={metadata['date']}")
