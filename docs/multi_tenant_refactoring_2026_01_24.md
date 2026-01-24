@@ -91,6 +91,7 @@ Slack勤怠管理Botを、複数のワークスペースに配布できるマル
   app = App(
       signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
       process_before_response=False
+      
   )
   ```
 

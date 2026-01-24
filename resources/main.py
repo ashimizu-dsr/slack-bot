@@ -27,7 +27,10 @@ logger = logging.getLogger(__name__)
 # Slack Bolt のインポート
 try:
     from slack_bolt import App
+    from slack_bolt.oauth.oauth_settings import OAuthSettings
     from slack_bolt.adapter.google_cloud_functions import SlackRequestHandler
+    from slack_bolt.adapter.firestore import FirestoreInstallationStore
+    from google.cloud import firestore
     from slack_sdk import WebClient
     print("DEBUG: slack_bolt imported", file=sys.stderr)
 except Exception as e:
@@ -62,10 +65,30 @@ init_db()
 
 print("Starting slack_bot application...", file=sys.stderr)
 
+# Firestore インスタンスの取得 (init_dbで初期化済みの前提)
+db = firestore.Client()
+
+# インストール情報をFirestoreに自動保存する設定
+installation_store = FirestoreInstallationStore(
+    database=db, 
+    collection="workspaces"
+)
+
+# OAuthの挙動設定
+oauth_settings = OAuthSettings(
+    client_id=os.environ.get("SLACK_CLIENT_ID"),
+    client_secret=os.environ.get("SLACK_CLIENT_SECRET"),
+    scopes=["chat:write", "commands", "users:read", "groups:read"], # 必要な権限を列挙
+    installation_store=installation_store,
+    install_path="/slack/install",
+    redirect_uri_path="/slack/oauth_redirect",
+)
+
 # 2. Slackアプリの準備（マルチテナント対応: tokenなし）
 app = App(
     signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
-    process_before_response=False  # Cloud Runでの非同期処理（直列）に対応
+    oauth_settings=oauth_settings, # ←ここを追加
+    process_before_response=False
 )
 
 # 3. サービスの準備（マルチテナント対応: clientは動的取得）
