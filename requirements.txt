@@ -1,7 +1,16 @@
+# Slack Bot Framework
 slack-bolt==1.18.1
-google-cloud-firestore>=2.11.0
-functions-framework
-slack_sdk==3.26.2
-openai
-python-dotenv
-flask>=2.0.0
+slack-sdk==3.26.2
+
+# Google Cloud Platform
+google-cloud-firestore==2.14.0
+functions-framework==3.5.0
+
+# Web Framework
+flask==3.0.0
+
+# AI/NLP (Optional)
+openai==1.6.1
+
+# Utilities
+python-dotenv==1.0.0

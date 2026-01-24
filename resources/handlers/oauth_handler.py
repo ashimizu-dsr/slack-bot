@@ -1,14 +1,21 @@
 """
-OAuth インストールハンドラー
+OAuth インストールハンドラー（旧版・参考用）
 
-このモジュールは、Slack AppをワークスペースにインストールするためのOAuth処理を提供します。
-マルチテナント対応のため、インストール時に bot_token を Firestore の workspaces コレクションに保存します。
+注意: このモジュールは現在使用されていません。
+OAuth処理は main.py の slack-bolt 組み込み機能により自動的に処理されます。
+
+- インストールURL: /slack/install
+- コールバックURL: /slack/oauth_redirect
+
+これらのエンドポイントは slack-bolt の OAuthSettings により自動的に処理されます。
+インストール情報は FirestoreInstallationStore (main.py内) により Firestore に保存されます。
+
+このファイルは、カスタムOAuth処理が必要な場合の参考実装として保持されています。
 """
 
 import logging
 import os
 from slack_sdk.oauth import AuthorizeUrlGenerator, OAuthStateUtils
-from slack_sdk.oauth.installation_store import Installation
 from slack_sdk.web import WebClient
 
 logger = logging.getLogger(__name__)
@@ -16,7 +23,9 @@ logger = logging.getLogger(__name__)
 
 def handle_oauth_redirect(request):
     """
-    OAuth リダイレクトハンドラー
+    OAuth リダイレクトハンドラー（カスタム実装版・未使用）
+    
+    現在は使用されていません。slack-bolt が自動的に処理します。
     
     Args:
         request: Google Cloud Run の HTTPリクエストオブジェクト
@@ -26,7 +35,6 @@ def handle_oauth_redirect(request):
     """
     from resources.shared.db import save_workspace_config
     
-    # クエリパラメータから code を取得
     code = request.args.get("code")
     state = request.args.get("state")
     
@@ -34,7 +42,6 @@ def handle_oauth_redirect(request):
         logger.error("OAuth code が見つかりません")
         return "OAuth Error: Missing code parameter", 400
     
-    # Client ID と Secret を環境変数から取得
     client_id = os.environ.get("SLACK_CLIENT_ID")
     client_secret = os.environ.get("SLACK_CLIENT_SECRET")
     
@@ -43,7 +50,6 @@ def handle_oauth_redirect(request):
         return "OAuth Error: Missing credentials", 500
     
     try:
-        # OAuth トークン交換
         client = WebClient()
         response = client.oauth_v2_access(
             client_id=client_id,
@@ -55,24 +61,37 @@ def handle_oauth_redirect(request):
             logger.error(f"OAuth トークン交換失敗: {response.get('error')}")
             return f"OAuth Error: {response.get('error')}", 400
         
-        # インストール情報を取得
         team_id = response["team"]["id"]
         team_name = response["team"]["name"]
         bot_token = response["access_token"]
         
-        # Firestore に保存
         save_workspace_config(
             team_id=team_id,
             team_name=team_name,
             bot_token=bot_token,
-            report_channel_id=None  # 後でモーダルから設定可能
+            report_channel_id=None
         )
         
         logger.info(f"OAuth インストール成功: Team={team_name} (ID={team_id})")
         
         return f"""
-        <html>
-        <head><title>インストール完了</title></head>
+        <!DOCTYPE html>
+        <html lang="ja">
+        <head>
+            <meta charset="UTF-8">
+            <title>インストール完了</title>
+            <style>
+                body {{
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    max-width: 600px;
+                    margin: 100px auto;
+                    padding: 20px;
+                    text-align: center;
+                }}
+                h1 {{ color: #2eb886; }}
+                p {{ color: #666; line-height: 1.6; }}
+            </style>
+        </head>
         <body>
             <h1>✅ インストール完了</h1>
             <p>ワークスペース「{team_name}」に勤怠管理Botがインストールされました。</p>
@@ -88,19 +107,20 @@ def handle_oauth_redirect(request):
 
 def get_oauth_install_url():
     """
-    OAuth インストール用URLを生成します。
+    OAuth インストール用URLを生成します（カスタム実装版・未使用）
+    
+    現在は使用されていません。slack-bolt が自動的に処理します。
     
     Returns:
         インストール用URL文字列
     """
     client_id = os.environ.get("SLACK_CLIENT_ID")
-    redirect_uri = os.environ.get("OAUTH_REDIRECT_URI")  # 例: https://your-app.run.app/oauth/callback
+    redirect_uri = os.environ.get("OAUTH_REDIRECT_URI")
     
     if not client_id or not redirect_uri:
         logger.error("SLACK_CLIENT_ID または OAUTH_REDIRECT_URI が設定されていません")
         return None
     
-    # スコープの定義（必要な権限）
     scopes = [
         "app_mentions:read",
         "channels:history",
@@ -114,13 +134,10 @@ def get_oauth_install_url():
         "groups:history",
     ]
     
-    # ユーザースコープ（必要な場合）
     user_scopes = []
     
-    # State パラメータの生成（CSRF対策）
     state = OAuthStateUtils.generate_state()
     
-    # URL生成
     generator = AuthorizeUrlGenerator(
         client_id=client_id,
         scopes=scopes,
