@@ -314,94 +314,6 @@ class NotificationService:
         total_end = time.time()
         logger.info(f"レポート送信処理完了 所要時間: {total_end - start_time:.4f}秒")
 
-    # def _send_daily_report_legacy(self, date_str: str, workspace_id: str) -> None:
-    #     """
-    #     日次レポートを旧方式で送信します（互換性のため）。
-        
-    #     Args:
-    #         date_str: 対象日（YYYY-MM-DD形式）
-    #         workspace_id: Slackワークスペースの一意ID
-            
-    #     Note:
-    #         v1.1以前の固定セクション構造を使用します。
-    #         v2.0のグループ設定が未完了の場合のフォールバック処理です。
-    #     """
-    #     logger.info("旧方式でレポートを送信します")
-        
-    #     # 送信先の決定
-    #     target_channels = []
-    #     env_channel = os.environ.get("REPORT_CHANNEL_ID")
-    #     if env_channel:
-    #         target_channels = [env_channel]
-    #     else:
-    #         target_channels = self._get_bot_joined_channels()
-
-    #     if not target_channels:
-    #         logger.error("レポート送信先が見つかりません。")
-    #         return
-
-    #     # 日付タイトルの準備
-    #     try:
-    #         dt = datetime.date.fromisoformat(date_str)
-    #     except:
-    #         dt = datetime.date.today()
-            
-    #     weekday_list = ["月", "火", "水", "木", "金", "土", "日"]
-    #     title_date = f"{dt.strftime('%m/%d')}({weekday_list[dt.weekday()]})"
-        
-    #     # 固定セクション構造
-    #     all_sections = [
-    #         ("sec_1", "1課"), ("sec_2", "2課"), ("sec_3", "3課"), ("sec_4", "4課"),
-    #         ("sec_5", "5課"), ("sec_6", "6課"), ("sec_7", "7課"), ("sec_finance", "金融開発課")
-    #     ]
-
-    #     for channel_id in target_channels:
-    #         try:
-    #             # データの取得
-    #             all_attendance_data = self.attendance_service.get_daily_report_data(
-    #                 workspace_id, date_str, channel_id
-    #             )
-
-    #             # Blocksの構築
-    #             blocks = [{
-    #                 "type": "header", 
-    #                 "text": {"type": "plain_text", "text": f"{title_date}の勤怠一覧"}
-    #             }]
-
-    #             for sec_id, sec_name in all_sections:
-    #                 records = all_attendance_data.get(sec_id, [])
-    #                 blocks.append({"type": "divider"})
-    #                 blocks.append({
-    #                     "type": "section", 
-    #                     "text": {"type": "mrkdwn", "text": f"*{sec_name}*"}
-    #                 })
-
-    #                 if not records:
-    #                     content_text = "_勤怠連絡はありません_"
-    #                 else:
-    #                     records.sort(key=lambda x: x.get('status', ''))
-    #                     lines = [
-    #                         f"• <@{r['user_id']}> - *{STATUS_TRANSLATION.get(r['status'], r['status'])}*"
-    #                         f"{f' ({r['note']})' if r.get('note') else ''}" 
-    #                         for r in records
-    #                     ]
-    #                     content_text = "\n".join(lines)
-
-    #                 blocks.append({
-    #                     "type": "context", 
-    #                     "elements": [{"type": "mrkdwn", "text": content_text}]
-    #                 })
-
-    #             # メッセージ送信
-    #             self.client.chat_postMessage(
-    #                 channel=channel_id, 
-    #                 blocks=blocks, 
-    #                 text=f"{title_date}の勤怠一覧"
-    #             )
-    #             logger.info(f"レポート送信成功（旧方式）: {channel_id}")
-
-    #         except Exception as e:
-    #             logger.error(f"チャンネル {channel_id} へのレポート送信失敗: {e}", exc_info=True)
 
     def _get_display_name(self, user_id):
         """
@@ -417,13 +329,26 @@ class NotificationService:
             user.get("name")（英数字ID）は使用しません。
         """
         try:
-            # --- 追加: メンション形式 <@U123...> から IDのみを抽出 ---
+            # 1. メンション形式のクレンジング
+            clean_user_id = user_id
             if user_id and isinstance(user_id, str):
-                user_id = user_id.replace("<@", "").replace(">", "").split("|")[0]
-            # --------------------------------------------------
-            res = self.client.users_info(user=user_id)
-            profile = res["user"].get("profile", {})
+                clean_user_id = user_id.replace("<@", "").replace(">", "").split("|")[0]
             
+            # 2. Slack API呼び出し
+            res = self.client.users_info(user=user_id)
+            if not res.get("ok"):
+                logger.warning(f"Slack API response not OK for user {clean_user_id}")
+                return user_id
+
+            user_data = res.get("user", {})
+            profile = user_data.get("profile", {})
+
+            # 【重要】デバッグ用ログ：何が取得できているか出力
+            logger.info(f"[DEBUG_NAME] UserID: {clean_user_id}, "
+                        f"DN: '{profile.get('display_name')}', "
+                        f"RN_Prof: '{profile.get('real_name')}', "
+                        f"RN_Top: '{user_data.get('real_name')}'")
+
             # 優先順位: 1. display_name, 2. real_name, 3. user_id
             display_name = profile.get("display_name", "").strip()
             if display_name:
@@ -434,9 +359,10 @@ class NotificationService:
                 return real_name
             
             # どちらもない場合はuser_idをそのまま返す
-            return user_id
+            return clean_user_id
             
         except Exception as e:
-            logger.warning(f"ユーザー名取得失敗: {user_id}, {e}")
-            return user_id
+            logger.warning(f"ユーザー名取得失敗: {user_id}, {e}", exc_info=True)
+            # エラー時も極力 @ 抜きを返す
+            return user_id.replace("<@", "").replace(">", "").split("|")[0] if user_id else "Unknown"
             
