@@ -23,65 +23,65 @@ def register_modal_handlers(app, attendance_service, notification_service) -> No
         notification_service: NotificationServiceインスタンス
     """
 
-    # ==========================================
-    # 1. 勤怠入力モーダル：「保存」押下（修正・更新）
-    # ==========================================
-    @app.view("attendance_submit")
-    def handle_attendance_save(ack, body, client, view):
-        """
-        勤怠入力モーダルの「保存」ボタン押下時の処理。
+    # # ==========================================
+    # # 1. 勤怠入力モーダル：「保存」押下（修正・更新）
+    # # ==========================================
+    # @app.view("attendance_submit")
+    # def handle_attendance_save(ack, body, client, view):
+    #     """
+    #     勤怠入力モーダルの「保存」ボタン押下時の処理。
         
-        既存レコードを更新する場合、元のメッセージを上書きします。
-        """
-        # モーダルを閉じる
-        ack()
+    #     既存レコードを更新する場合、元のメッセージを上書きします。
+    #     """
+    #     # モーダルを閉じる
+    #     ack()
         
-        user_id = body["user"]["id"]
-        workspace_id = body["team"]["id"]
+    #     user_id = body["user"]["id"]
+    #     workspace_id = body["team"]["id"]
         
-        # モーダル生成時に仕込んだメタデータを取得
-        metadata = json.loads(view.get("private_metadata", "{}"))
-        vals = view["state"]["values"]
+    #     # モーダル生成時に仕込んだメタデータを取得
+    #     metadata = json.loads(view.get("private_metadata", "{}"))
+    #     vals = view["state"]["values"]
         
-        date = metadata.get("date")
-        # どのメッセージを上書きするか（message_ts）をメタデータから取得
-        target_message_ts = metadata.get("message_ts") 
+    #     date = metadata.get("date")
+    #     # どのメッセージを上書きするか（message_ts）をメタデータから取得
+    #     target_message_ts = metadata.get("message_ts") 
 
-        status = vals["status_block"]["status_select"]["selected_option"]["value"]
-        note = vals["note_block"]["note_input"]["value"] or ""
+    #     status = vals["status_block"]["status_select"]["selected_option"]["value"]
+    #     note = vals["note_block"]["note_input"]["value"] or ""
 
-        try:
-            # 1. 既存レコードを取得（修正: get_specific_date_recordメソッドを使用）
-            existing = attendance_service.get_specific_date_record(workspace_id, user_id, date) or {}
+    #     try:
+    #         # 1. 既存レコードを取得（修正: get_specific_date_recordメソッドを使用）
+    #         existing = attendance_service.get_specific_date_record(workspace_id, user_id, date) or {}
             
-            # 2. 保存実行
-            record = attendance_service.save_attendance(
-                workspace_id=workspace_id,
-                user_id=user_id,
-                email=existing.get("email"),
-                date=date,
-                status=status,
-                note=note,
-                channel_id=existing.get("channel_id") or metadata.get("channel_id"),
-                ts=existing.get("ts")
-            )
+    #         # 2. 保存実行
+    #         record = attendance_service.save_attendance(
+    #             workspace_id=workspace_id,
+    #             user_id=user_id,
+    #             email=existing.get("email"),
+    #             date=date,
+    #             status=status,
+    #             note=note,
+    #             channel_id=existing.get("channel_id") or metadata.get("channel_id"),
+    #             ts=existing.get("ts")
+    #         )
             
-            # 3. 通知（上書き実行）
+    #         # 3. 通知（上書き実行）
 
-            print("DEBUG: CALLED FROM HANDLER_モーダルハンドラー")
+    #         print("DEBUG: CALLED FROM HANDLER_モーダルハンドラー")
 
-            notification_service.notify_attendance_change(
-                record=record,
-                # display_name=display_name,
-                is_update=True,
-                channel=existing.get("channel_id") or metadata.get("channel_id"),
-                thread_ts=existing.get("ts"),
-                message_ts=target_message_ts
-            )
-            logger.info(f"Modal update success: {user_id} on {date}, target_ts: {target_message_ts}")
+    #         notification_service.notify_attendance_change(
+    #             record=record,
+    #             # display_name=display_name,
+    #             is_update=True,
+    #             channel=existing.get("channel_id") or metadata.get("channel_id"),
+    #             thread_ts=existing.get("ts"),
+    #             message_ts=target_message_ts
+    #         )
+    #         logger.info(f"Modal update success: {user_id} on {date}, target_ts: {target_message_ts}")
             
-        except Exception as e:
-            logger.error(f"勤怠保存失敗 (Modal): {e}", exc_info=True)
+    #     except Exception as e:
+    #         logger.error(f"勤怠保存失敗 (Modal): {e}", exc_info=True)
 
 
 
