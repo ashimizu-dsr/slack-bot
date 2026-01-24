@@ -24,13 +24,16 @@ if current_dir not in sys.path:
 # ロガーのセットアップ
 logger = logging.getLogger(__name__)
 
+
+from google.cloud import firestore  # ← これを try の外、トップレベルに置く
+
 # Slack Bolt のインポート
 from slack_bolt import App
 from slack_bolt.oauth.oauth_settings import OAuthSettings
 from slack_bolt.adapter.google_cloud_functions import SlackRequestHandler
 from slack_bolt.adapter.firestore import FirestoreInstallationStore
 from slack_sdk import WebClient
-from google.cloud import firestore  # ← これを try の外、トップレベルに置く
+
 
 
 # 自作モジュールの読み込み
