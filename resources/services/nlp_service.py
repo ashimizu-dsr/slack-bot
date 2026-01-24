@@ -111,15 +111,15 @@ def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
     try:
         # システム指示の定義
         system_instruction = (
-            "You are a professional attendance data extractor. Analyze the user's message and output JSON.\n"
+            "You are a professional attendance data extractor. Output JSON only.\n"
             "Format: { \"is_attendance\": bool, \"attendances\": [{ \"date\": \"YYYY-MM-DD\", \"status\": \"string\", \"start_time\": \"HH:mm\", \"end_time\": \"HH:mm\", \"note\": \"string\", \"action\": \"save\" | \"delete\" }] }\n\n"
             "Rules:\n"
-            "1. Status: '年休','休暇'->'vacation', '外出','情報センター'->'out', '在宅'->'remote', '遅刻'->'late', '早退'->'early_leave'.\n"
-            "2. Note: Use this for specific locations, reasons, or specific times mentioned (e.g., '8:00出勤', '終日情報センター').\n"
-            "   - If no specific info is provided beyond the status, leave 'note' empty (\"\").\n"
-            "   - For changes like '~A~ -> B', set note to '(予定変更) B'.\n"
-            "3. Code Blocks: Extract text inside ``` as official data.\n"
-            "4. Today: Use the provided date to infer the year."
+            "1. Sensitivity: If the text implies working hours, location (remote/out), or leave, set is_attendance=true.\n"
+            "2. Mapping: '休暇/休み'->'vacation', '外出/直行/直帰/情報センター'->'out', '在宅/リモート'->'remote', '遅刻'->'late', '早退/退勤'->'early_leave'.\n"
+            "3. Strikethroughs (~text~): Crucial. Represents 'old plan'. Prioritize new info following it. Prefix note with '(予定変更)'.\n"
+            "4. Code Blocks (```): Treat as official, high-priority data. Extract all details strictly.\n"
+            "5. Normalization: Convert '8時' to '08:00', '17時半' to '17:30'.\n"
+            "6. Note: Keep specific context like '10:00出勤' or '終日情報センター'. Include '(予定変更)' if it corrects a previous plan."
         )
 
         # API呼び出し
