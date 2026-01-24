@@ -67,8 +67,12 @@ def register_modal_handlers(app, attendance_service, notification_service) -> No
             )
             
             # 3. 通知（上書き実行）
+
+            print("DEBUG: CALLED FROM HANDLER_モーダルハンドラー")
+
             notification_service.notify_attendance_change(
                 record=record,
+                # display_name=display_name,
                 is_update=True,
                 channel=existing.get("channel_id") or metadata.get("channel_id"),
                 thread_ts=existing.get("ts"),

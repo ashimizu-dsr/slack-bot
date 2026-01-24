@@ -62,51 +62,51 @@ class InteractionProcessor:
             logger.error(f"メッセージ処理失敗: {e}", exc_info=True)
             raise
     
-    def _handle_delete_attendance(self, body: Dict[str, Any]) -> None:
-        """
-        勤怠削除処理を実行します。
+    # def _handle_delete_attendance(self, body: Dict[str, Any]) -> None:
+    #     """
+    #     勤怠削除処理を実行します。
         
-        Args:
-            body: Slackから受信したbodyデータ
-        """
-        try:
-            user_id = body["user"]["id"]
-            workspace_id = body["team"]["id"]
-            view = body.get("view", {})
-            metadata = json.loads(view.get("private_metadata", "{}"))
+    #     Args:
+    #         body: Slackから受信したbodyデータ
+    #     """
+    #     try:
+    #         user_id = body["user"]["id"]
+    #         workspace_id = body["team"]["id"]
+    #         view = body.get("view", {})
+    #         metadata = json.loads(view.get("private_metadata", "{}"))
             
-            # 1. 勤怠を削除（ビジネスロジック）
-            self.attendance_service.delete_attendance(
-                workspace_id=workspace_id,
-                user_id=user_id,
-                date=metadata["date"]
-            )
+    #         # 1. 勤怠を削除（ビジネスロジック）
+    #         self.attendance_service.delete_attendance(
+    #             workspace_id=workspace_id,
+    #             user_id=user_id,
+    #             date=metadata["date"]
+    #         )
 
-            # 2. NotificationService から表示名を取得（ここであのログが出るはずです！）
-            display_name = self.notification_service._get_display_name(user_id)
-            date_val = metadata["date"]
+    #         # 2. NotificationService から表示名を取得（ここであのログが出るはずです！）
+    #         display_name = self.notification_service._get_display_name(user_id)
+    #         date_val = metadata["date"]
             
-            # 3. メッセージを更新（chat_update）
-            # デザイン（blocks）は NotificationService の notify_attendance_change 内の 
-            # is_delete 時の構造に合わせています
-            self.client.chat_update(
-                channel=metadata["channel_id"],
-                ts=metadata["message_ts"],
-                text=f"勤怠連絡を取り消しました: {date_val}",
-                blocks=[{
-                    "type": "context",
-                    "elements": [{
-                        "type": "mrkdwn", 
-                        "text": f"ⓘ *{display_name}* さんの {date_val} の勤怠連絡を取り消しました"
-                    }]
-                }]
-            )
+    #         # 3. メッセージを更新（chat_update）
+    #         # デザイン（blocks）は NotificationService の notify_attendance_change 内の 
+    #         # is_delete 時の構造に合わせています
+    #         self.client.chat_update(
+    #             channel=metadata["channel_id"],
+    #             ts=metadata["message_ts"],
+    #             text=f"勤怠連絡を取り消しました: {date_val}",
+    #             blocks=[{
+    #                 "type": "context",
+    #                 "elements": [{
+    #                     "type": "mrkdwn", 
+    #                     "text": f"ⓘ *{display_name}* さんの {date_val} の勤怠連絡を取り消しました"
+    #                 }]
+    #             }]
+    #         )
             
-            logger.info(f"削除成功: User={user_id}, Date={metadata['date']}")
+    #         logger.info(f"削除成功: User={user_id}, Date={metadata['date']}")
         
-        except Exception as e:
-            logger.error(f"削除処理失敗: {e}", exc_info=True)
-            raise
+    #     except Exception as e:
+    #         logger.error(f"削除処理失敗: {e}", exc_info=True)
+    #         raise
 
 
 def create_pubsub_endpoint(app, processor: InteractionProcessor):

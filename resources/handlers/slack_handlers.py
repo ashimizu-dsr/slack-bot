@@ -203,6 +203,8 @@ def process_attendance_core(event, client, attendance_service, notification_serv
             )
             
             # 通知カードの送信
+
+            print("DEBUG: CALLED FROM HANDLER_スラックハンドラー")
             notification_service.notify_attendance_change(
                 record=record, 
                 channel=channel, 
