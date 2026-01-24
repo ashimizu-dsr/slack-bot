@@ -506,7 +506,12 @@ def register_action_handlers(app, attendance_service, notification_service, disp
             try:
                 users_data = client.users_list()
                 if users_data["ok"]:
-                    user_name_map = {u["id"]: u["real_name"] or u["name"] for u in users_data["members"] if u["id"] in all_uids}
+                    for u in users_data["members"]:
+                        if u["id"] in all_uids:
+                            profile = u.get("profile", {})
+                            # 優先順位: 表示名(display_name) > 本名(real_name) > アカウント名(name)
+                            name = profile.get("display_name") or u.get("real_name") or u.get("name")
+                            user_name_map[u["id"]] = name
             except Exception as e:
                 logger.error(f"Failed to fetch user list: {e}")
 
