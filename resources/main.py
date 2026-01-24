@@ -41,8 +41,7 @@ from slack_sdk import WebClient
 
 # OAuth関連
 from slack_bolt.oauth.oauth_settings import OAuthSettings
-from slack_bolt.oauth.installation_store import InstallationStore
-from slack_sdk.oauth.installation_store import Installation, Bot
+from slack_sdk.oauth.installation_store import InstallationStore, Installation, Bot
 from slack_sdk.oauth.state_store import FileOAuthStateStore
 
 # 自作モジュール
