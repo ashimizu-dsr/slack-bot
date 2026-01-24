@@ -943,7 +943,7 @@ def create_admin_settings_modal(admin_ids: List[str] = None, groups: List[Dict[s
             # --- 【修正箇所】メンション <@uid> をやめて表示名にする ---
             member_names = []
             for uid in group.get("member_ids", []):
-                name = user_name_map.get(uid, uid) # マップにあれば名前、なければID
+                name = user_name_map.get(uid, f"<@{uid}>") # マップにあれば名前、なければID
                 member_names.append(name)
             
             members_text = ", ".join(member_names)
