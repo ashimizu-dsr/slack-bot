@@ -62,16 +62,16 @@ init_db()
 
 print("Starting slack_bot application...", file=sys.stderr)
 
-# 2. Slackアプリの準備
+# 2. Slackアプリの準備（マルチテナント対応: tokenなし）
 app = App(
-    token=os.environ.get("SLACK_BOT_TOKEN"),
     signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
     process_before_response=False  # Cloud Runでの非同期処理（直列）に対応
 )
 
-# 3. サービスの準備
+# 3. サービスの準備（マルチテナント対応: clientは動的取得）
 attendance_service = AttendanceService()
-notification_service = NotificationService(app.client, attendance_service)
+# notification_service は各リクエストで動的に生成するため、ここでは初期化しない
+notification_service = None
 
 # 4. Pub/Sub関連の準備（有効な場合）
 dispatcher = None
@@ -80,18 +80,15 @@ processor = None
 if PUBSUB_ENABLED:
     try:
         dispatcher = InteractionDispatcher()
-        processor = InteractionProcessor(
-            slack_client=WebClient(token=os.environ.get("SLACK_BOT_TOKEN")),
-            attendance_service=attendance_service,
-            notification_service=notification_service
-        )
-        logger.info("Pub/Sub機能が有効化されました")
+        # processor も動的にクライアントを取得する必要があるため、ここでは初期化しない
+        logger.info("Pub/Sub機能が有効化されました（マルチテナント対応）")
     except Exception as e:
         logger.error(f"Pub/Sub初期化失敗: {e}", exc_info=True)
         dispatcher = None
         processor = None
 
 # 5. ハンドラーの登録（新しいリスナー構造）
+# notification_service は None でも OK（リスナー内で動的に生成）
 register_all_listeners(app, attendance_service, notification_service, dispatcher=dispatcher)
 
 # 6. Google Cloud Functions/Run 用のハンドラー
@@ -131,19 +128,32 @@ def slack_bot(request):
             JST = timezone(timedelta(hours=9))
             today_str = datetime.datetime.now(JST).date().isoformat()
             
-            # --- 環境変数を使わないワークスペースIDの取得 ---
-            # 自分の情報を確認して Team ID を取得する
-            auth_info = app.client.auth_test()
-            workspace_id = auth_info.get("team_id")
+            # マルチテナント対応: 全ワークスペースに対してレポートを送信
+            from resources.shared.db import db
+            from resources.clients.slack_client import get_slack_client
             
-            if not workspace_id:
-                # 万が一取得できなかった場合のフォールバック
-                workspace_id = os.environ.get("SLACK_WORKSPACE_ID", "GLOBAL_WS")
+            workspaces_docs = db.collection("workspaces").stream()
             
-            logger.info(f"Target date: {today_str}, Workspace ID: {workspace_id}")
-            
-            # レポート送信処理の実行
-            notification_service.send_daily_report(today_str, workspace_id)
+            for ws_doc in workspaces_docs:
+                workspace_id = ws_doc.id
+                workspace_data = ws_doc.to_dict()
+                
+                logger.info(f"Target date: {today_str}, Workspace ID: {workspace_id}")
+                
+                try:
+                    # ワークスペースごとに WebClient を取得
+                    client = get_slack_client(workspace_id)
+                    
+                    # NotificationService を動的に生成
+                    from resources.services.notification_service import NotificationService
+                    notification_service = NotificationService(client, attendance_service)
+                    
+                    # レポート送信処理の実行
+                    notification_service.send_daily_report(today_str, workspace_id)
+                    
+                except Exception as ws_error:
+                    logger.error(f"レポート送信失敗 (workspace={workspace_id}): {ws_error}", exc_info=True)
+                    continue
             
             return "Daily report sent successfully", 200
             
@@ -162,6 +172,48 @@ def slack_bot(request):
         except Exception as e:
             logger.error(f"Pub/Sub処理失敗: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}, 500
+    
+    # 3. OAuth コールバック（アプリインストール時）
+    if path == "/oauth/callback":
+        logger.info("OAuth callback request received")
+        
+        try:
+            from resources.handlers.oauth_handler import handle_oauth_redirect
+            response, status = handle_oauth_redirect(request)
+            return response, status
+        except Exception as e:
+            logger.error(f"OAuth処理失敗: {e}", exc_info=True)
+            return f"OAuth Error: {e}", 500
+    
+    # 4. OAuth インストールURL取得（テスト用）
+    if path == "/oauth/install":
+        logger.info("OAuth install URL request received")
+        
+        try:
+            from resources.handlers.oauth_handler import get_oauth_install_url
+            install_url = get_oauth_install_url()
+            
+            if not install_url:
+                return "OAuth設定が不完全です。環境変数を確認してください。", 500
+            
+            return f"""
+            <html>
+            <head><title>アプリのインストール</title></head>
+            <body>
+                <h1>勤怠管理Botをインストール</h1>
+                <p>以下のボタンをクリックして、ワークスペースにBotをインストールしてください。</p>
+                <a href="{install_url}">
+                    <img alt="Add to Slack" height="40" width="139" 
+                         src="https://platform.slack-edge.com/img/add_to_slack.png" 
+                         srcSet="https://platform.slack-edge.com/img/add_to_slack.png 1x, 
+                                https://platform.slack-edge.com/img/add_to_slack@2x.png 2x" />
+                </a>
+            </body>
+            </html>
+            """, 200
+        except Exception as e:
+            logger.error(f"OAuth URL生成失敗: {e}", exc_info=True)
+            return f"Error: {e}", 500
 
-    # 3. 通常のSlackイベント（メッセージ、ボタン、ショートカット等）
+    # 5. 通常のSlackイベント（メッセージ、ボタン、ショートカット等）
     return handler.handle(request)

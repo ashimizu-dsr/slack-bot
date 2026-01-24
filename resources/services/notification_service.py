@@ -133,24 +133,25 @@ class NotificationService:
     # ==========================================
     def send_daily_report(self, date_str: str, workspace_id: str = None) -> None: 
         """
-        日次レポートを管理者に送信します（v2.0版）。
+        日次レポートを管理者に送信します（v2.0版、マルチテナント対応）。
         
         Args:
             date_str: 対象日（YYYY-MM-DD形式）
-            workspace_id: Slackワークスペースの一意ID（省略時は環境変数から取得）
+            workspace_id: Slackワークスペースの一意ID（必須）
             
         Note:
             v2.0では、グループ構造と管理者設定を使用してレポートを生成・送信します。
+            マルチテナント対応により、環境変数ではなくFirestoreから設定を取得します。
         """
         if not self.attendance_service:
             logger.error("attendance_service が未設定のためレポート送信不可。")
             return
+        
+        if not workspace_id:
+            logger.error("workspace_id が指定されていないためレポート送信不可。")
+            return
 
         start_time = time.time()
-        
-        # workspace_idの取得
-        if not workspace_id:
-            workspace_id = os.environ.get("SLACK_WORKSPACE_ID", "GLOBAL_WS")
         
         # 1. 管理者と送信先チャンネルの取得
         from resources.services.workspace_service import WorkspaceService
@@ -163,11 +164,23 @@ class NotificationService:
             logger.warning(f"管理者が設定されていません: Workspace={workspace_id}")
             return
         
-        # 2. 送信先チャンネルの自動決定
-        joined_channels = self.slack_wrapper.fetch_bot_joined_channels()
+        # 2. 送信先チャンネルの決定
+        # マルチテナント対応: workspaces コレクションから report_channel_id を取得
+        from resources.shared.db import get_workspace_config
+        workspace_config = get_workspace_config(workspace_id)
         
-        if not joined_channels:
-            logger.warning("Botがどのチャンネルにも参加していないため、管理者DMへ送信します。")
+        report_channel_id = None
+        if workspace_config:
+            report_channel_id = workspace_config.get("report_channel_id")
+        
+        # report_channel_id が設定されていない場合は Bot が参加しているチャンネルに送信
+        if report_channel_id:
+            target_channels = [report_channel_id]
+        else:
+            target_channels = self.slack_wrapper.fetch_bot_joined_channels()
+        
+        if not target_channels:
+            logger.warning("送信先チャンネルが見つからないため、管理者DMへ送信します。")
         
         # 3. 日付タイトルの準備
         try:
@@ -256,10 +269,10 @@ class NotificationService:
                             "text": {"type": "mrkdwn", "text": content_text}
                         })
 
-        # 8. メッセージ送信（全参加チャンネル対応）
+        # 8. メッセージ送信
         try:
-            if joined_channels:
-                for channel_id in joined_channels:
+            if target_channels:
+                for channel_id in target_channels:
                     self.slack_wrapper.send_message(
                         channel=channel_id,
                         blocks=blocks,

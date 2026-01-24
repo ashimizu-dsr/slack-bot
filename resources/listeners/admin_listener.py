@@ -37,17 +37,21 @@ def register_admin_listeners(app):
         from resources.services.workspace_service import WorkspaceService
         from resources.templates.modals import create_admin_settings_modal
         
-        workspace_id = body["team"]["id"]
+        team_id = body["team"]["id"]  # マルチテナント対応: team_id を取得
         
         try:
+            # マルチテナント対応: team_id に基づいて WebClient を取得
+            from resources.clients.slack_client import get_slack_client
+            dynamic_client = get_slack_client(team_id)
+            
             group_service = GroupService()
             workspace_service = WorkspaceService()
             
             # 管理者IDを取得
-            admin_ids = workspace_service.get_admin_ids(workspace_id)
+            admin_ids = workspace_service.get_admin_ids(team_id)
             
             # 全グループを取得
-            groups = group_service.get_all_groups(workspace_id)
+            groups = group_service.get_all_groups(team_id)
 
             # ユーザー名マップの生成
             all_uids = set(admin_ids)
@@ -56,7 +60,7 @@ def register_admin_listeners(app):
             
             user_name_map = {}
             try:
-                users_data = client.users_list()
+                users_data = dynamic_client.users_list()
                 if users_data["ok"]:
                     for u in users_data["members"]:
                         if u["id"] in all_uids:
@@ -77,10 +81,10 @@ def register_admin_listeners(app):
                 user_name_map=user_name_map
             )
             
-            client.views_open(trigger_id=body["trigger_id"], view=view)
+            dynamic_client.views_open(trigger_id=body["trigger_id"], view=view)
             
             logger.info(
-                f"レポート設定モーダル表示(v2.22): Workspace={workspace_id}, Groups={len(groups)}"
+                f"レポート設定モーダル表示(v2.22): Workspace={team_id}, Groups={len(groups)}"
             )
         except Exception as e:
             logger.error(f"レポート設定モーダル表示失敗: {e}", exc_info=True)
@@ -355,7 +359,7 @@ def _update_parent_admin_modal(client, view_id, workspace_id):
     親モーダル（レポート設定一覧）を最新データで更新します（v2.22用ヘルパー）。
     
     Args:
-        client: Slack client
+        client: Slack client（マルチテナント対応済み）
         view_id: 更新対象のview_id
         workspace_id: ワークスペースID
     """

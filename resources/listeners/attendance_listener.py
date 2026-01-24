@@ -102,7 +102,7 @@ def execute_attendance_from_message(
         notification_service: NotificationServiceインスタンス
     """
     user_id = event.get("user")
-    workspace_id = event.get("team")
+    team_id = event.get("team")  # マルチテナント対応: team_id を取得
     ts = event.get("ts")
     channel = event.get("channel")
     text = (event.get("text") or "").strip()
@@ -142,7 +142,7 @@ def execute_attendance_from_message(
             # A. 削除アクション
             if action == "delete":
                 try:
-                    attendance_service.delete_attendance(workspace_id, user_id, date)
+                    attendance_service.delete_attendance(team_id, user_id, date)
                     notification_service.notify_attendance_change(
                         record={"user_id": user_id, "date": date},
                         channel=channel,
@@ -155,7 +155,7 @@ def execute_attendance_from_message(
 
             # B. 保存・更新アクション
             record = attendance_service.save_attendance(
-                workspace_id=workspace_id, 
+                workspace_id=team_id,  # マルチテナント対応: workspace_id として team_id を渡す
                 user_id=user_id, 
                 email=email,
                 date=date, 
@@ -184,7 +184,7 @@ def register_attendance_listeners(app, attendance_service, notification_service,
     Args:
         app: Slack Bolt Appインスタンス
         attendance_service: AttendanceServiceインスタンス
-        notification_service: NotificationServiceインスタンス
+        notification_service: NotificationServiceインスタンス（マルチテナント対応では None でも可）
         dispatcher: InteractionDispatcherインスタンス（非同期処理用、オプション）
     """
 
@@ -192,7 +192,7 @@ def register_attendance_listeners(app, attendance_service, notification_service,
     # 1. メッセージ受信（AI解析による勤怠登録）
     # ==========================================
     @app.event("message")
-    def on_incoming_message(event, client, ack):
+    def on_incoming_message(event, client, ack, body):
         """
         メッセージ受信ハンドラー。
         
@@ -203,12 +203,27 @@ def register_attendance_listeners(app, attendance_service, notification_service,
         if not should_process_message(event):
             return
 
-        execute_attendance_from_message(
-            event=event, 
-            client=client, 
-            attendance_service=attendance_service, 
-            notification_service=notification_service
-        )
+        # マルチテナント対応: team_id を取得して、動的に WebClient を生成
+        team_id = body.get("team_id") or event.get("team")
+        
+        from resources.clients.slack_client import get_slack_client
+        from resources.services.notification_service import NotificationService
+        
+        try:
+            # team_id に基づいて WebClient を取得
+            dynamic_client = get_slack_client(team_id)
+            
+            # NotificationService を動的に生成
+            dynamic_notification_service = NotificationService(dynamic_client, attendance_service)
+            
+            execute_attendance_from_message(
+                event=event, 
+                client=dynamic_client, 
+                attendance_service=attendance_service, 
+                notification_service=dynamic_notification_service
+            )
+        except Exception as e:
+            logger.error(f"メッセージ処理エラー (team_id={team_id}): {e}", exc_info=True)
 
     # ==========================================
     # 2. 勤怠の「修正」ボタン押下
@@ -225,7 +240,7 @@ def register_attendance_listeners(app, attendance_service, notification_service,
         from resources.templates.modals import create_attendance_modal_view
         
         user_id = body["user"]["id"]
-        workspace_id = body["team"]["id"]
+        team_id = body["team"]["id"]  # マルチテナント対応: team_id を取得
         trigger_id = body["trigger_id"]
         date = body["actions"][0].get("value")
         
@@ -233,11 +248,15 @@ def register_attendance_listeners(app, attendance_service, notification_service,
         message_ts = body["container"]["message_ts"]
 
         try:
-            record = get_single_attendance_record(workspace_id, user_id, date)
+            # マルチテナント対応: team_id に基づいて WebClient を取得
+            from resources.clients.slack_client import get_slack_client
+            dynamic_client = get_slack_client(team_id)
+            
+            record = get_single_attendance_record(team_id, user_id, date)
             
             # 本人チェック
             if record and record.get("user_id") != user_id:
-                client.chat_postEphemeral(
+                dynamic_client.chat_postEphemeral(
                     channel=channel_id,
                     user=user_id,
                     text="⚠️ この操作は打刻した本人しか行えません。"
@@ -266,7 +285,7 @@ def register_attendance_listeners(app, attendance_service, notification_service,
             )
             view["private_metadata"] = private_metadata 
             
-            client.views_open(trigger_id=trigger_id, view=view)
+            dynamic_client.views_open(trigger_id=trigger_id, view=view)
             
         except Exception as e:
             logger.error(f"修正モーダル表示失敗: {e}", exc_info=True)
@@ -286,15 +305,19 @@ def register_attendance_listeners(app, attendance_service, notification_service,
         from resources.templates.modals import create_attendance_delete_confirm_modal
         
         user_id = body["user"]["id"]
-        workspace_id = body["team"]["id"]
+        team_id = body["team"]["id"]  # マルチテナント対応: team_id を取得
         trigger_id = body["trigger_id"]
         date = body["actions"][0]["value"]
         channel_id = body["container"]["channel_id"]
 
         try:
-            record = get_single_attendance_record(workspace_id, user_id, date)
+            # マルチテナント対応: team_id に基づいて WebClient を取得
+            from resources.clients.slack_client import get_slack_client
+            dynamic_client = get_slack_client(team_id)
+            
+            record = get_single_attendance_record(team_id, user_id, date)
             if record and record.get("user_id") != user_id:
-                client.chat_postEphemeral(
+                dynamic_client.chat_postEphemeral(
                     channel=channel_id, 
                     user=user_id, 
                     text="⚠️ 本人のみ取消可能です。"
@@ -311,7 +334,7 @@ def register_attendance_listeners(app, attendance_service, notification_service,
                 "message_ts": body["container"]["message_ts"],
                 "channel_id": channel_id
             })
-            client.views_open(trigger_id=trigger_id, view=view)
+            dynamic_client.views_open(trigger_id=trigger_id, view=view)
         except Exception as e:
             logger.error(f"取消モーダル表示失敗: {e}", exc_info=True)
 
@@ -325,6 +348,9 @@ def register_attendance_listeners(app, attendance_service, notification_service,
         """
         ack()
         
+        # マルチテナント対応: team_id を取得
+        team_id = body["team"]["id"]
+        
         # 非同期処理が有効な場合
         if dispatcher:
             try:
@@ -332,18 +358,24 @@ def register_attendance_listeners(app, attendance_service, notification_service,
                 logger.info("削除リクエストをキューに投げました（非同期）")
             except Exception as e:
                 logger.error(f"非同期ディスパッチ失敗、同期処理にフォールバック: {e}", exc_info=True)
-                _execute_delete_sync(body, client, view, attendance_service)
+                # マルチテナント対応: team_id に基づいて WebClient を取得
+                from resources.clients.slack_client import get_slack_client
+                dynamic_client = get_slack_client(team_id)
+                _execute_delete_sync(body, dynamic_client, view, attendance_service)
         else:
-            _execute_delete_sync(body, client, view, attendance_service)
+            # マルチテナント対応: team_id に基づいて WebClient を取得
+            from resources.clients.slack_client import get_slack_client
+            dynamic_client = get_slack_client(team_id)
+            _execute_delete_sync(body, dynamic_client, view, attendance_service)
     
     def _execute_delete_sync(body, client, view, attendance_service):
         """勤怠削除の同期処理（内部関数）"""
         user_id = body["user"]["id"]
-        workspace_id = body["team"]["id"]
+        team_id = body["team"]["id"]  # マルチテナント対応: team_id を取得
         metadata = json.loads(view.get("private_metadata", "{}"))
 
         try:
-            attendance_service.delete_attendance(workspace_id, user_id, metadata["date"])
+            attendance_service.delete_attendance(team_id, user_id, metadata["date"])
             client.chat_update(
                 channel=metadata["channel_id"],
                 ts=metadata["message_ts"],
@@ -374,14 +406,18 @@ def register_attendance_listeners(app, attendance_service, notification_service,
         from resources.templates.modals import create_history_modal_view
         
         user_id = body["user"]["id"]
-        workspace_id = body["team"]["id"] 
+        team_id = body["team"]["id"]  # マルチテナント対応: team_id を取得
         
         try:
+            # マルチテナント対応: team_id に基づいて WebClient を取得
+            from resources.clients.slack_client import get_slack_client
+            dynamic_client = get_slack_client(team_id)
+            
             today = datetime.date.today()
             month_str = today.strftime("%Y-%m")
             
             history = attendance_service.get_user_history(
-                workspace_id=workspace_id, 
+                workspace_id=team_id,  # マルチテナント対応: workspace_id として team_id を渡す
                 user_id=user_id, 
                 month_filter=month_str
             )
@@ -392,7 +428,7 @@ def register_attendance_listeners(app, attendance_service, notification_service,
                 selected_month=f"{today.month:02d}",
                 user_id=user_id
             )
-            client.views_open(trigger_id=body["trigger_id"], view=view)
+            dynamic_client.views_open(trigger_id=body["trigger_id"], view=view)
             logger.info(f"履歴表示: User={user_id}, Month={month_str}, Count={len(history)}")
         except Exception as e:
             logger.error(f"履歴表示失敗: {e}", exc_info=True)
@@ -411,8 +447,13 @@ def register_attendance_listeners(app, attendance_service, notification_service,
         ack()
         from resources.templates.modals import create_history_modal_view
         
-        workspace_id = body["team"]["id"]
+        team_id = body["team"]["id"]  # マルチテナント対応: team_id を取得
+        
         try:
+            # マルチテナント対応: team_id に基づいて WebClient を取得
+            from resources.clients.slack_client import get_slack_client
+            dynamic_client = get_slack_client(team_id)
+            
             metadata = json.loads(body["view"]["private_metadata"])
             target_user_id = metadata.get("target_user_id")
             
@@ -423,7 +464,7 @@ def register_attendance_listeners(app, attendance_service, notification_service,
             month_filter = f"{selected_year}-{selected_month}"
             
             history = attendance_service.get_user_history(
-                workspace_id=workspace_id, 
+                workspace_id=team_id,  # マルチテナント対応: workspace_id として team_id を渡す
                 user_id=target_user_id, 
                 month_filter=month_filter
             )
@@ -435,7 +476,7 @@ def register_attendance_listeners(app, attendance_service, notification_service,
                 user_id=target_user_id
             )
             
-            client.views_update(
+            dynamic_client.views_update(
                 view_id=body["view"]["id"], 
                 hash=body["view"]["hash"], 
                 view=updated_view

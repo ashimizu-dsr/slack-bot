@@ -332,3 +332,76 @@ def get_attendance_records_by_sections(
     except Exception as e:
         logger.error(f"Error fetching records by sections: {e}", exc_info=True)
         return []
+
+
+# ==========================================
+# ワークスペース管理（マルチテナント対応）
+# ==========================================
+
+def get_workspace_config(team_id: str) -> Optional[Dict[str, Any]]:
+    """
+    ワークスペース設定（bot_token、report_channel_idなど）を取得します。
+    
+    Args:
+        team_id: Slackワークスペースの一意ID
+        
+    Returns:
+        ワークスペース設定の辞書:
+        {
+            "team_id": "T01234567",
+            "team_name": "Example Workspace",
+            "bot_token": "xoxb-...",
+            "report_channel_id": "C01234567",
+            "installed_at": "2026-01-24T10:00:00"
+        }
+        存在しない場合はNone
+    """
+    try:
+        doc = db.collection("workspaces").document(team_id).get()
+        
+        if not doc.exists:
+            logger.warning(f"ワークスペース設定が見つかりません: {team_id}")
+            return None
+        
+        data = doc.to_dict()
+        logger.info(f"ワークスペース設定取得成功: {team_id}")
+        return data
+    except Exception as e:
+        logger.error(f"ワークスペース設定取得エラー: {e}", exc_info=True)
+        return None
+
+
+def save_workspace_config(
+    team_id: str,
+    team_name: str,
+    bot_token: str,
+    report_channel_id: Optional[str] = None
+) -> None:
+    """
+    ワークスペース設定を保存します（OAuth インストール時に使用）。
+    
+    Args:
+        team_id: Slackワークスペースの一意ID
+        team_name: ワークスペース名
+        bot_token: Bot User OAuth Token
+        report_channel_id: レポート送信先チャンネルID（オプション）
+        
+    Raises:
+        Exception: Firestore書き込みに失敗した場合
+    """
+    try:
+        doc_ref = db.collection("workspaces").document(team_id)
+        
+        doc_ref.set({
+            "team_id": team_id,
+            "team_name": team_name,
+            "bot_token": bot_token,
+            "report_channel_id": report_channel_id or "",
+            "installed_at": firestore.SERVER_TIMESTAMP,
+            "updated_at": firestore.SERVER_TIMESTAMP
+        }, merge=True)
+        
+        logger.info(f"ワークスペース設定保存成功: {team_id} ({team_name})")
+    except Exception as e:
+        logger.error(f"ワークスペース設定保存エラー: {e}", exc_info=True)
+        raise

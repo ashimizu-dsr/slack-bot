@@ -3,6 +3,11 @@
 
 このモジュールは、アプリケーション全体で使用する定数を集約します。
 ステータス翻訳、セクション定義、環境変数の読み込みなどを提供します。
+
+注意: マルチテナント対応により、以下の環境変数は非推奨となりました:
+- SLACK_BOT_TOKEN (workspaces コレクションから取得)
+- REPORT_CHANNEL_ID (workspaces コレクションから取得)
+- SLACK_WORKSPACE_ID (リクエストの team_id から取得)
 """
 
 import os
@@ -41,14 +46,10 @@ SECTION_TRANSLATION = {
 # 2. 環境変数から取得する設定値
 # ==========================================
 
-# Slack App 認証情報
-SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
+# Slack App 認証情報（マルチテナント対応）
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
-SLACK_CLIENT_ID = os.environ.get("SLACK_CLIENT_ID")  # OAuth Flow用（未実装）
-SLACK_CLIENT_SECRET = os.environ.get("SLACK_CLIENT_SECRET")  # OAuth Flow用（未実装）
-
-# ワークスペースID（単一WS運用時に使用）
-SLACK_WORKSPACE_ID = os.environ.get("SLACK_WORKSPACE_ID", "GLOBAL_WS")
+SLACK_CLIENT_ID = os.environ.get("SLACK_CLIENT_ID")  # OAuth Flow用
+SLACK_CLIENT_SECRET = os.environ.get("SLACK_CLIENT_SECRET")  # OAuth Flow用
 
 # OpenAI API設定
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -58,7 +59,6 @@ ENABLE_CHANNEL_NLP = os.getenv("ENABLE_CHANNEL_NLP", "true").lower() == "true"
 
 # チャンネルID設定（指定すると、そのチャンネルのみで動作）
 ATTENDANCE_CHANNEL_ID = os.environ.get("ATTENDANCE_CHANNEL_ID")  # AI解析対象
-REPORT_CHANNEL_ID = os.environ.get("REPORT_CHANNEL_ID")  # レポート送信先
 
 # ==========================================
 # 3. その他の設定

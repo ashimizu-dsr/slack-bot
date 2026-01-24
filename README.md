@@ -1,9 +1,11 @@
 # Slack勤怠管理Bot
 
-**バージョン**: v2.22 (レポート設定UI全面刷新版)  
-**最終更新**: 2026-01-22
+**バージョン**: v2.23 (マルチテナント対応版)  
+**最終更新**: 2026-01-24
 
 AI解析機能を備えた、Slack向けの勤怠管理Botです。自然言語での勤怠連絡を自動的に解析し、構造化されたデータとして保存・集計します。
+
+**⭐️ NEW**: 複数のワークスペースに同時配布できるマルチテナント対応を完了しました！
 
 ## 主な機能
 
@@ -36,6 +38,13 @@ AI解析機能を備えた、Slack向けの勤怠管理Botです。自然言語�
 - ユーザーごとの勤怠履歴をモーダルで表示
 - 月別フィルタリング機能
 - 過去の記録の編集・削除が可能
+
+### 5. マルチテナント対応（v2.23）🆕
+
+- 複数のワークスペースに同時配布可能
+- OAuth インストールフローをサポート
+- 各ワークスペースのトークンを Firestore で管理
+- ワークスペースごとに独立した設定を保持
 
 ## アーキテクチャ
 
@@ -174,23 +183,35 @@ slack-attendance-bot/
 #### 必須
 
 ```bash
-SLACK_BOT_TOKEN=xoxb-your-bot-token
 SLACK_SIGNING_SECRET=your-signing-secret
+SLACK_CLIENT_ID=your-client-id
+SLACK_CLIENT_SECRET=your-client-secret
+OAUTH_REDIRECT_URI=https://your-app.run.app/oauth/callback
 OPENAI_API_KEY=sk-your-openai-api-key
 ```
 
 #### オプション
 
 ```bash
-# ワークスペースID（マルチテナント対応の場合）
-SLACK_WORKSPACE_ID=T01234567
+# AI解析の有効/無効（デフォルト: true）
+ENABLE_CHANNEL_NLP=true
 
-# レポート送信先チャンネルID（未設定の場合は管理者DM）
-REPORT_CHANNEL_ID=C01234567
+# AI解析対象チャンネルを制限する場合
+ATTENDANCE_CHANNEL_ID=C01234567
+
+# Pub/Sub機能の有効/無効（デフォルト: false）
+ENABLE_PUBSUB=false
 
 # ログレベル
 LOG_LEVEL=INFO
 ```
+
+#### 削除された環境変数（マルチテナント対応により非推奨）
+
+以下の環境変数は使用されなくなりました:
+- ~~`SLACK_BOT_TOKEN`~~ → Firestore の `workspaces` コレクションから取得
+- ~~`REPORT_CHANNEL_ID`~~ → Firestore の `workspaces` コレクションから取得
+- ~~`SLACK_WORKSPACE_ID`~~ → リクエストの `team_id` から取得
 
 ### 4. デプロイ
 
@@ -209,8 +230,30 @@ gcloud run deploy slack-attendance-bot \
   --platform managed \
   --region asia-northeast1 \
   --allow-unauthenticated \
-  --set-env-vars SLACK_BOT_TOKEN=xoxb-...,SLACK_SIGNING_SECRET=...,OPENAI_API_KEY=sk-...
+  --set-env-vars SLACK_SIGNING_SECRET=...,SLACK_CLIENT_ID=...,SLACK_CLIENT_SECRET=...,OAUTH_REDIRECT_URI=https://your-app.run.app/oauth/callback,OPENAI_API_KEY=sk-...
 ```
+
+#### OAuth インストール
+
+1. ブラウザで `https://your-app.run.app/oauth/install` にアクセス
+2. 「Add to Slack」ボタンをクリック
+3. ワークスペースを選択してインストール
+4. リダイレクト後、Firestore の `workspaces` コレクションにトークンが保存される
+
+#### 既存ワークスペースの移行
+
+既存のワークスペース（環境変数でトークンを管理していた場合）は、以下の手順で移行してください:
+
+1. Firestore コンソールで `workspaces` コレクションを開く
+2. 新しいドキュメントを作成（ドキュメントID = `team_id`）
+3. 以下のフィールドを設定:
+   - `team_id`: ワークスペースの team_id
+   - `team_name`: ワークスペース名
+   - `bot_token`: 既存の SLACK_BOT_TOKEN
+   - `report_channel_id`: （オプション）既存の REPORT_CHANNEL_ID
+   - `installed_at`: 現在時刻
+   - `updated_at`: 現在時刻
+4. 環境変数から `SLACK_BOT_TOKEN` などを削除
 
 #### Slack AppのRequest URLを設定
 
@@ -218,6 +261,7 @@ gcloud run deploy slack-attendance-bot \
 
 - **Event Subscriptions > Request URL**: `https://your-cloud-run-url/slack/events`
 - **Interactivity & Shortcuts > Request URL**: `https://your-cloud-run-url/slack/events`
+- **OAuth & Permissions > Redirect URLs**: `https://your-cloud-run-url/oauth/callback`
 
 ### 5. Cloud Schedulerの設定（日次レポート）
 

@@ -6,8 +6,44 @@ Slack Client ラッパー
 """
 import logging
 from typing import List, Dict, Any, Optional
+from slack_sdk import WebClient
 
 logger = logging.getLogger(__name__)
+
+
+def get_slack_client(team_id: str) -> WebClient:
+    """
+    team_id に基づいて Slack WebClient を生成します。
+    
+    Args:
+        team_id: Slackワークスペースの一意ID
+        
+    Returns:
+        そのワークスペース用の WebClient インスタンス
+        
+    Raises:
+        ValueError: ワークスペース設定が見つからない、またはトークンが無効な場合
+        
+    Note:
+        内部で Firestore の workspaces コレクションから bot_token を取得します。
+        マルチテナント対応の中核となる関数です。
+    """
+    from resources.shared.db import get_workspace_config
+    
+    workspace_config = get_workspace_config(team_id)
+    
+    if not workspace_config:
+        logger.error(f"ワークスペース設定が見つかりません: team_id={team_id}")
+        raise ValueError(f"Workspace configuration not found for team_id: {team_id}")
+    
+    bot_token = workspace_config.get("bot_token")
+    
+    if not bot_token:
+        logger.error(f"bot_token が設定されていません: team_id={team_id}")
+        raise ValueError(f"bot_token not configured for team_id: {team_id}")
+    
+    logger.info(f"Slack WebClient を生成しました: team_id={team_id}")
+    return WebClient(token=bot_token)
 
 
 class SlackClientWrapper:
