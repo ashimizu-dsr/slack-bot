@@ -38,7 +38,7 @@ from resources.shared.setup_logger import setup_logger
 from resources.shared.db import init_db
 from resources.services.attendance_service import AttendanceService
 from resources.services.notification_service import NotificationService
-from resources.handlers import register_all_handlers
+from resources.listeners import register_all_listeners
 
 # Pub/Sub関連のインポート（オプション）
 PUBSUB_ENABLED = os.environ.get("ENABLE_PUBSUB", "false").lower() == "true"
@@ -91,8 +91,8 @@ if PUBSUB_ENABLED:
         dispatcher = None
         processor = None
 
-# 5. ハンドラーの登録
-register_all_handlers(app, attendance_service, notification_service, dispatcher=dispatcher)
+# 5. ハンドラーの登録（新しいリスナー構造）
+register_all_listeners(app, attendance_service, notification_service, dispatcher=dispatcher)
 
 # 6. Google Cloud Functions/Run 用のハンドラー
 handler = SlackRequestHandler(app)

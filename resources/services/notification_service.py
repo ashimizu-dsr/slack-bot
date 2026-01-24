@@ -3,6 +3,11 @@
 
 このモジュールは、Slackへのメッセージ送信・通知処理を担当します。
 勤怠カード、日次レポート、エラーメッセージなどの送信を統括します。
+
+命名規則:
+- fetch_xxx: データ取得
+- notify_xxx: 通知送信
+- execute_xxx: 実行処理
 """
 
 import datetime
@@ -13,6 +18,8 @@ from typing import Any, Dict, List, Optional
 
 # ステータス翻訳をインポート
 from resources.constants import STATUS_TRANSLATION
+from resources.clients.slack_client import SlackClientWrapper
+from resources.templates.cards import build_attendance_card, build_delete_notification
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +40,27 @@ class NotificationService:
             attendance_service: AttendanceServiceインスタンス（レポート生成に使用）
         """
         self.client = slack_client
+        self.slack_wrapper = SlackClientWrapper(slack_client)
         self.attendance_service = attendance_service
 
+    # ==========================================
+    # 名前解決（内部メソッド）
+    # ==========================================
+    def fetch_user_display_name(self, user_id: str) -> str:
+        """
+        ユーザーIDから表示名を取得します。
+        
+        Args:
+            user_id: SlackユーザーID
+            
+        Returns:
+            表示名（優先順位: display_name > real_name > user_id）
+        """
+        return self.slack_wrapper.fetch_user_display_name(user_id)
+
+    # ==========================================
+    # 勤怠通知（統一インターフェース）
+    # ==========================================
     def notify_attendance_change(
         self, 
         record: Any, 
@@ -54,84 +80,57 @@ class NotificationService:
             is_delete: 削除通知かどうか
             
         Note:
-            - 削除の場合は簡易メッセージを投稿
-            - 記録・更新の場合は勤怠カード（ボタン付き）を投稿
+            このメソッドが唯一の通知送信の入口となります。
+            内部で必ずfetch_user_display_nameを呼び出し、
+            整形済みの名前をView層（build_attendance_card）に渡します。
         """
-        from resources.views.modal_views import create_attendance_card_blocks
-        
         try:
+            # ユーザーIDを取得
+            user_id = record.user_id if hasattr(record, 'user_id') else record.get('user_id')
+            
+            # 【重要】名前を必ず解決してから View層に渡す
+            display_name = self.fetch_user_display_name(user_id)
+            
             # 1. 削除通知の場合
             if is_delete:
-                user_id = record.user_id if hasattr(record, 'user_id') else record.get('user_id')
-                display_name = self._get_display_name(user_id)
                 date_val = record.date if hasattr(record, 'date') else record.get('date')
-                self.client.chat_postMessage(
+                blocks = build_delete_notification(display_name, date_val)
+                
+                self.slack_wrapper.send_message(
                     channel=channel,
-                    thread_ts=thread_ts,
+                    blocks=blocks,
                     text=f"勤怠連絡を取り消しました: {date_val}",
-                    blocks=[{
-                        "type": "context",
-                        "elements": [{"type": "mrkdwn", "text": f"ⓘ {display_name} さんの {date_val} の勤怠連絡を取り消しました"}]
-                    }]
+                    thread_ts=thread_ts
                 )
                 logger.info(f"削除通知を送信しました: User={user_id}, Date={date_val}")
                 return
 
             # 2. 記録・更新通知の場合
-            user_id = record.user_id if hasattr(record, 'user_id') else record.get('user_id')
-            display_name = self._get_display_name(user_id)
-            
-            blocks = create_attendance_card_blocks(
-                record, 
-                display_name=display_name,
+            blocks = build_attendance_card(
+                record=record,
+                display_name=display_name,  # 整形済みの名前を渡す
                 is_update=is_update,
                 show_buttons=True
             )
             
-            # msg_text = "勤怠記録を更新しました" if is_update else "勤怠を記録しました"
-            # action_label = "更新" if is_update else "記録"
-            # msg_text = f"ⓘ {display_name}さんの勤怠連絡を{action_label}しました"
+            date_val = record.date if hasattr(record, 'date') else record.get('date')
+            text = "勤怠記録を更新しました" if is_update else "勤怠を記録しました"
             
-            self.client.chat_postMessage(
+            self.slack_wrapper.send_message(
                 channel=channel,
-                thread_ts=thread_ts,
                 blocks=blocks,
-                # text=msg_text
+                text=text,
+                thread_ts=thread_ts
             )
             
-            date_val = record.date if hasattr(record, 'date') else record.get('date')
             logger.info(f"勤怠カードを送信しました: User={user_id}, Date={date_val}, Update={is_update}")
             
         except Exception as e:
             logger.error(f"通知送信失敗: {e}", exc_info=True)
 
-    def _get_bot_joined_channels(self) -> List[str]:
-        """
-        Botが参加しているチャンネルIDの一覧を動的に取得します。
-        
-        Returns:
-            チャンネルIDの配列
-            
-        Note:
-            公開チャンネルのみを取得します。
-            プライベートチャンネルを含める場合は、types="private_channel"も追加する必要があります。
-        """
-        try:
-            # Botが参加している公開チャンネルを一覧取得
-            response = self.client.conversations_list(
-                types="public_channel, private_channel",  # privateも追加
-                exclude_archived=True
-            )
-            joined_channels = [
-                c["id"] for c in response["channels"] 
-                if c.get("is_member", False)
-            ]
-            logger.info(f"Bot参加チャンネル数: {len(joined_channels)}")
-            return joined_channels
-        except Exception as e:
-            logger.error(f"チャンネル一覧取得失敗: {e}", exc_info=True)
-            return []
-
+    # ==========================================
+    # 日次レポート送信
+    # ==========================================
     def send_daily_report(self, date_str: str, workspace_id: str = None) -> None: 
         """
         日次レポートを管理者に送信します（v2.0版）。
@@ -142,7 +141,6 @@ class NotificationService:
             
         Note:
             v2.0では、グループ構造と管理者設定を使用してレポートを生成・送信します。
-            旧方式の固定セクション構造には対応していません。
         """
         if not self.attendance_service:
             logger.error("attendance_service が未設定のためレポート送信不可。")
@@ -163,21 +161,12 @@ class NotificationService:
         
         if not admin_ids:
             logger.warning(f"管理者が設定されていません: Workspace={workspace_id}")
-            # 旧方式へのフォールバック（互換性のため）
-            # self._send_daily_report_legacy(date_str, workspace_id)
             return
         
         # 2. 送信先チャンネルの自動決定
-        # まずBotが参加しているチャンネル一覧を取得
-        joined_channels = self._get_bot_joined_channels()
+        joined_channels = self.slack_wrapper.fetch_bot_joined_channels()
         
-        if joined_channels:
-            # 参加している最初のチャンネルを送信先とする
-            target_channel = joined_channels[0]
-            logger.info(f"レポート送信先（自動判別）: {target_channel}")
-        else:
-            # どこにも参加していない場合は管理者にDM（バックアップ策）
-            target_channel = None
+        if not joined_channels:
             logger.warning("Botがどのチャンネルにも参加していないため、管理者DMへ送信します。")
         
         # 3. 日付タイトルの準備
@@ -199,35 +188,15 @@ class NotificationService:
             logger.warning(f"グループが設定されていません: Workspace={workspace_id}")
             return
 
-        # --- 【追加】名前表示用のキャッシュを作成 ---
-        # 全グループに所属する全メンバーのIDを抽出
+        # 5. 全グループに所属する全メンバーのIDを抽出
         all_member_ids = set()
         for g in all_groups:
             all_member_ids.update(g.get("member_ids", []))
         
-        # IDから名前(real_name)への変換マップを作成
-        user_name_map = {}
-        for uid in all_member_ids:
-            try:
-                u_info = self.client.users_info(user=uid)
-                user_data = u_info["user"]
-                profile = user_data.get("profile", {})
-                
-                # 優先順位: 表示名(display_name) > 氏名(real_name) > アカウント名(name)
-                display_name = (
-                    profile.get("display_name") or 
-                    profile.get("real_name") or 
-                    user_data.get("real_name") or 
-                    user_data.get("name") or 
-                    uid
-                )
-                user_name_map[uid] = display_name
-            except Exception as e:
-                logger.warning(f"ユーザー情報の取得に失敗: {uid}, Error: {e}")
-                user_name_map[uid] = uid
-        # ----------------------------------------
+        # 6. IDから名前への変換マップを作成
+        user_name_map = self.slack_wrapper.fetch_user_name_map(list(all_member_ids))
 
-        # 5. レポートブロックの構築
+        # 7. レポートブロックの構築
         blocks = []
         if mention_text:
             blocks.append({
@@ -257,11 +226,12 @@ class NotificationService:
                 })
                 continue
 
-            # --- 区分ごとにデータを集計 ---
-            # status_map = { "late": ["名前 (備考)", "名前"], "vacation": ["名前"] }
+            # 区分ごとにデータを集計
             status_map = {}
             for user_id in member_ids:
-                record = self.attendance_service.get_specific_date_record(workspace_id, user_id, date_str)
+                record = self.attendance_service.get_specific_date_record(
+                    workspace_id, user_id, date_str
+                )
                 if record:
                     st = record.get('status', 'other')
                     display_name = user_name_map.get(user_id, user_id)
@@ -278,28 +248,21 @@ class NotificationService:
                 })
             else:
                 # 区分（遅刻、休暇など）ごとにブロックを作成
-                # STATUS_TRANSLATION の定義順に表示されます
                 for st_key, st_label in STATUS_TRANSLATION.items():
                     if st_key in status_map:
-                        # 区分名を太字にして、その下に名前を並べる
                         content_text = f"*{st_label}*\n" + "\n".join(status_map[st_key])
-                        
-                        # context ではなく section を使うことで文字が普通サイズになります
                         blocks.append({
                             "type": "section",
                             "text": {"type": "mrkdwn", "text": content_text}
                         })
 
-        # 6. メッセージ送信（全参加チャンネル対応）
+        # 8. メッセージ送信（全参加チャンネル対応）
         try:
-            # Botが参加しているチャンネルをすべて取得
-            joined_channels = self._get_bot_joined_channels()
-            
             if joined_channels:
                 for channel_id in joined_channels:
-                    self.client.chat_postMessage(
-                        channel=channel_id, 
-                        blocks=blocks, 
+                    self.slack_wrapper.send_message(
+                        channel=channel_id,
+                        blocks=blocks,
                         text=f"{title_date}の勤怠一覧"
                     )
                     logger.info(f"レポート送信成功: {channel_id}")
@@ -307,7 +270,11 @@ class NotificationService:
                 # どこにも参加していない場合は管理者にDM
                 for admin_id in admin_ids:
                     dm = self.client.conversations_open(users=admin_id)
-                    self.client.chat_postMessage(channel=dm["channel"]["id"], blocks=blocks)
+                    self.slack_wrapper.send_message(
+                        channel=dm["channel"]["id"],
+                        blocks=blocks,
+                        text=f"{title_date}の勤怠一覧"
+                    )
 
         except Exception as e:
             logger.error(f"送信エラー: {e}")
@@ -315,55 +282,9 @@ class NotificationService:
         total_end = time.time()
         logger.info(f"レポート送信処理完了 所要時間: {total_end - start_time:.4f}秒")
 
-
-    def _get_display_name(self, user_id):
-        """
-        ユーザーIDから表示名を取得する内部メソッド。
-        
-        Args:
-            user_id: SlackユーザーID
-            
-        Returns:
-            表示名（優先順位: display_name > real_name > user_id）
-            
-        Note:
-            user.get("name")（英数字ID）は使用しません。
-        """
-        try:
-            # 1. メンション形式のクレンジング
-            clean_user_id = user_id
-            if user_id and isinstance(user_id, str):
-                clean_user_id = user_id.replace("<@", "").replace(">", "").split("|")[0]
-            
-            # 2. Slack API呼び出し
-            res = self.client.users_info(user=clean_user_id)
-            if not res.get("ok"):
-                logger.warning(f"Slack API response not OK for user {clean_user_id}")
-                return user_id
-
-            user_data = res.get("user", {})
-            profile = user_data.get("profile", {})
-
-            # 【重要】デバッグ用ログ：何が取得できているか出力
-            logger.error(f"[DEBUG_NAME] UserID: {clean_user_id}, "
-                        f"DN: '{profile.get('display_name')}', "
-                        f"RN_Prof: '{profile.get('real_name')}', "
-                        f"RN_Top: '{user_data.get('real_name')}'")
-
-            # 優先順位: 1. display_name, 2. real_name, 3. user_id
-            display_name = profile.get("display_name", "").strip()
-            if display_name:
-                return display_name
-            
-            real_name = profile.get("real_name", "").strip()
-            if real_name:
-                return real_name
-            
-            # どちらもない場合はuser_idをそのまま返す
-            return clean_user_id
-            
-        except Exception as e:
-            logger.error(f"ユーザー名取得失敗: {user_id}, {e}", exc_info=True)
-            # エラー時も極力 @ 抜きを返す
-            return user_id.replace("<@", "").replace(">", "").split("|")[0] if user_id else "Unknown"
-            
+    # ==========================================
+    # 後方互換性のため（旧メソッド名）
+    # ==========================================
+    def _get_display_name(self, user_id: str) -> str:
+        """旧メソッド名との互換性のため（非推奨）"""
+        return self.fetch_user_display_name(user_id)

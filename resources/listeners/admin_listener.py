@@ -1,121 +1,107 @@
 """
-フォーム送信する処理
+管理機能リスナー
 
-モーダルハンドラー
+このモジュールは、管理者向けのSlackイベントを受け取ります。
+- レポート設定ショートカット
+- グループ追加・編集・削除
 
-このモジュールは、Slackモーダル内のフォーム送信（Submit）を処理します。
-勤怠入力モーダルやメンバー設定モーダルの保存処理を担当します。
+命名規則:
+- on_xxx: Slackイベントを受け取る
 """
 import json
 import logging
-from resources.shared.db import save_channel_members_db
 
 logger = logging.getLogger(__name__)
 
 
-def register_modal_handlers(app, attendance_service, notification_service) -> None:
+def register_admin_listeners(app):
     """
-    モーダル関連のハンドラーをSlack Appに登録します。
-    
-    Args:
-        app: Slack Bolt Appインスタンス
-        attendance_service: AttendanceServiceインスタンス
-        notification_service: NotificationServiceインスタンス
-    """
-
-    # # ==========================================
-    # # 1. 勤怠入力モーダル：「保存」押下（修正・更新）
-    # # ==========================================
-    # @app.view("attendance_submit")
-    # def handle_attendance_save(ack, body, client, view):
-    #     """
-    #     勤怠入力モーダルの「保存」ボタン押下時の処理。
-        
-    #     既存レコードを更新する場合、元のメッセージを上書きします。
-    #     """
-    #     # モーダルを閉じる
-    #     ack()
-        
-    #     user_id = body["user"]["id"]
-    #     workspace_id = body["team"]["id"]
-        
-    #     # モーダル生成時に仕込んだメタデータを取得
-    #     metadata = json.loads(view.get("private_metadata", "{}"))
-    #     vals = view["state"]["values"]
-        
-    #     date = metadata.get("date")
-    #     # どのメッセージを上書きするか（message_ts）をメタデータから取得
-    #     target_message_ts = metadata.get("message_ts") 
-
-    #     status = vals["status_block"]["status_select"]["selected_option"]["value"]
-    #     note = vals["note_block"]["note_input"]["value"] or ""
-
-    #     try:
-    #         # 1. 既存レコードを取得（修正: get_specific_date_recordメソッドを使用）
-    #         existing = attendance_service.get_specific_date_record(workspace_id, user_id, date) or {}
-            
-    #         # 2. 保存実行
-    #         record = attendance_service.save_attendance(
-    #             workspace_id=workspace_id,
-    #             user_id=user_id,
-    #             email=existing.get("email"),
-    #             date=date,
-    #             status=status,
-    #             note=note,
-    #             channel_id=existing.get("channel_id") or metadata.get("channel_id"),
-    #             ts=existing.get("ts")
-    #         )
-            
-    #         # 3. 通知（上書き実行）
-
-    #         print("DEBUG: CALLED FROM HANDLER_モーダルハンドラー")
-
-    #         notification_service.notify_attendance_change(
-    #             record=record,
-    #             # display_name=display_name,
-    #             is_update=True,
-    #             channel=existing.get("channel_id") or metadata.get("channel_id"),
-    #             thread_ts=existing.get("ts"),
-    #             message_ts=target_message_ts
-    #         )
-    #         logger.info(f"Modal update success: {user_id} on {date}, target_ts: {target_message_ts}")
-            
-    #     except Exception as e:
-    #         logger.error(f"勤怠保存失敗 (Modal): {e}", exc_info=True)
-
-
-
-# ==========================================
-# v2.22用ハンドラー
-# ==========================================
-
-def register_modal_handlers_v22(app):
-    """
-    v2.22のモーダルハンドラーを登録します。
+    管理機能関連のリスナーをSlack Appに登録します。
     
     Args:
         app: Slack Bolt Appインスタンス
     """
 
     # ==========================================
-    # 1. v2.22: レポート設定モーダル「保存」押下
+    # 1. グローバルショートカット「レポート設定」
+    # ==========================================
+    @app.shortcut("open_member_setup_modal")
+    def on_admin_settings_shortcut(ack, body, client):
+        """
+        グローバルショートカット「レポート設定」のハンドラー（v2.22）。
+        
+        レポート設定モーダル（一覧表示）を開きます。
+        """
+        ack()
+        from resources.services.group_service import GroupService
+        from resources.services.workspace_service import WorkspaceService
+        from resources.templates.modals import create_admin_settings_modal
+        
+        workspace_id = body["team"]["id"]
+        
+        try:
+            group_service = GroupService()
+            workspace_service = WorkspaceService()
+            
+            # 管理者IDを取得
+            admin_ids = workspace_service.get_admin_ids(workspace_id)
+            
+            # 全グループを取得
+            groups = group_service.get_all_groups(workspace_id)
+
+            # ユーザー名マップの生成
+            all_uids = set(admin_ids)
+            for g in groups:
+                all_uids.update(g.get("member_ids", []))
+            
+            user_name_map = {}
+            try:
+                users_data = client.users_list()
+                if users_data["ok"]:
+                    for u in users_data["members"]:
+                        if u["id"] in all_uids:
+                            profile = u.get("profile", {})
+                            name = (
+                                profile.get("display_name") or 
+                                u.get("real_name") or 
+                                u.get("name")
+                            )
+                            user_name_map[u["id"]] = name
+            except Exception as e:
+                logger.error(f"Failed to fetch user list: {e}")
+
+            # モーダルを生成
+            view = create_admin_settings_modal(
+                admin_ids=admin_ids, 
+                groups=groups, 
+                user_name_map=user_name_map
+            )
+            
+            client.views_open(trigger_id=body["trigger_id"], view=view)
+            
+            logger.info(
+                f"レポート設定モーダル表示(v2.22): Workspace={workspace_id}, Groups={len(groups)}"
+            )
+        except Exception as e:
+            logger.error(f"レポート設定モーダル表示失敗: {e}", exc_info=True)
+
+    # ==========================================
+    # 2. レポート設定モーダル「保存」押下
     # ==========================================
     @app.view("admin_settings_modal")
-    def handle_admin_settings_submission(ack, body, view):
+    def on_admin_settings_submitted(ack, body, view):
         """
         レポート設定モーダル（一覧）の「保存」ボタン押下時の処理（v2.22）。
         
         通知先（admin_ids）のみを保存します。
-        グループの編集は個別のモーダルで行います。
         """
         ack()
+        from resources.services.workspace_service import WorkspaceService
         
         workspace_id = body["team"]["id"]
         vals = view["state"]["values"]
         
         try:
-            from resources.services.workspace_service import WorkspaceService
-            
             workspace_service = WorkspaceService()
             
             # 通知先（管理者）IDを取得
@@ -129,21 +115,42 @@ def register_modal_handlers_v22(app):
             logger.error(f"通知先保存失敗(v2.22): {e}", exc_info=True)
 
     # ==========================================
-    # 2. v2.22: グループ追加モーダル「保存」押下
+    # 3. 「追加」ボタン押下
+    # ==========================================
+    @app.action("add_new_group")
+    def on_add_group_button_clicked(ack, body, client):
+        """
+        「追加」ボタンのハンドラー（v2.22）。
+        
+        views.pushでグループ追加モーダルを表示します。
+        """
+        from resources.templates.modals import create_add_group_modal
+        
+        try:
+            view = create_add_group_modal()
+            client.views_push(trigger_id=body["trigger_id"], view=view)
+            logger.info("グループ追加モーダル表示(v2.22)")
+            ack()
+        except Exception as e:
+            logger.error(f"グループ追加モーダル表示失敗: {e}", exc_info=True)
+            ack()
+
+    # ==========================================
+    # 4. グループ追加モーダル「保存」押下
     # ==========================================
     @app.view("add_group_modal")
-    def handle_add_group_submission(ack, body, view, client):
+    def on_add_group_submitted(ack, body, view, client):
         """
         グループ追加モーダルの「保存」ボタン押下時の処理（v2.22）。
         
         新しいグループを作成し、親モーダル（一覧）を更新します。
         """
+        from resources.services.group_service import GroupService
+        
         workspace_id = body["team"]["id"]
         vals = view["state"]["values"]
         
         try:
-            from resources.services.group_service import GroupService
-            
             group_service = GroupService()
             
             # 入力値を取得
@@ -167,7 +174,6 @@ def register_modal_handlers_v22(app):
             )
             logger.info(f"グループ作成(v2.22): {group_name}, Members={len(member_ids)}")
             
-            # 成功
             ack()
             
             # 親モーダル（一覧）を更新
@@ -178,22 +184,92 @@ def register_modal_handlers_v22(app):
             ack()
 
     # ==========================================
-    # 3. v2.22: グループ編集モーダル「更新」押下
+    # 5. オーバーフローメニュー（...）押下
+    # ==========================================
+    @app.action("group_overflow_action")
+    def on_group_overflow_menu_selected(ack, body, client):
+        """
+        オーバーフローメニュー（...）のハンドラー（v2.22）。
+        
+        action_value:
+          - "edit_{group_id}": 編集モーダルをpush
+          - "delete_{group_id}": 削除確認モーダルをpush
+        """
+        from resources.services.group_service import GroupService
+        from resources.templates.modals import (
+            create_edit_group_modal,
+            create_member_delete_confirm_modal
+        )
+        
+        workspace_id = body["team"]["id"]
+        
+        try:
+            group_service = GroupService()
+            
+            # 選択されたアクションの値（edit_xxx または delete_xxx）
+            action_value = body["actions"][0]["selected_option"]["value"]
+            
+            # アクションタイプとgroup_idを分離
+            action_type, group_id = action_value.split("_", 1)
+            
+            if action_type == "edit":
+                # 編集モーダルを表示
+                group = group_service.get_group_by_id(workspace_id, group_id)
+                
+                if not group:
+                    logger.error(f"グループが見つかりません: {group_id}")
+                    ack()
+                    return
+                
+                view = create_edit_group_modal(
+                    group_id=group["group_id"],
+                    group_name=group["name"],
+                    member_ids=group.get("member_ids", [])
+                )
+                
+                client.views_push(trigger_id=body["trigger_id"], view=view)
+                logger.info(f"編集モーダル表示(v2.22): {group_id}")
+                
+            elif action_type == "delete":
+                # 削除確認モーダルを表示
+                group = group_service.get_group_by_id(workspace_id, group_id)
+                
+                if not group:
+                    logger.error(f"グループが見つかりません: {group_id}")
+                    ack()
+                    return
+                
+                view = create_member_delete_confirm_modal(
+                    group_id=group["group_id"],
+                    group_name=group["name"]
+                )
+                
+                client.views_push(trigger_id=body["trigger_id"], view=view)
+                logger.info(f"削除確認モーダル表示(v2.22): {group_id}")
+            
+            ack()
+                
+        except Exception as e:
+            logger.error(f"オーバーフローメニュー処理失敗: {e}", exc_info=True)
+            ack()
+
+    # ==========================================
+    # 6. グループ編集モーダル「更新」押下
     # ==========================================
     @app.view("edit_group_modal")
-    def handle_edit_group_submission(ack, body, view, client):
+    def on_edit_group_submitted(ack, body, view, client):
         """
         グループ編集モーダルの「更新」ボタン押下時の処理（v2.22）。
         
         グループ名とメンバーを更新し、親モーダル（一覧）を更新します。
         """
+        from resources.services.group_service import GroupService
+        
         workspace_id = body["team"]["id"]
         metadata = json.loads(view.get("private_metadata", "{}"))
         vals = view["state"]["values"]
         
         try:
-            from resources.services.group_service import GroupService
-            
             group_service = GroupService()
             
             # metadataからgroup_idを取得
@@ -224,7 +300,6 @@ def register_modal_handlers_v22(app):
             )
             logger.info(f"グループ更新(v2.22): {group_name} ({group_id}), Members={len(member_ids)}")
             
-            # 成功
             ack()
             
             # 親モーダル（一覧）を更新
@@ -235,10 +310,10 @@ def register_modal_handlers_v22(app):
             ack()
 
     # ==========================================
-    # 4. v2.22: 削除確認モーダル「削除する」押下
+    # 7. 削除確認モーダル「削除する」押下
     # ==========================================
     @app.view("delete_confirm_modal")
-    def handle_delete_confirm_submission(ack, body, view, client):
+    def on_delete_group_confirmed(ack, body, view, client):
         """
         削除確認モーダルの「削除する」ボタン押下時の処理（v2.22）。
         
@@ -248,10 +323,6 @@ def register_modal_handlers_v22(app):
         metadata = json.loads(view.get("private_metadata", "{}"))
         
         try:
-            from resources.services.group_service import GroupService
-            
-            group_service = GroupService()
-            
             # metadataからgroup_idを取得
             group_id = metadata.get("group_id")
             group_name = metadata.get("group_name", "")
@@ -269,7 +340,6 @@ def register_modal_handlers_v22(app):
             group_ref.delete()
             logger.info(f"グループ削除(v2.22): {group_name} ({group_id})")
             
-            # 成功
             ack()
             
             # 親モーダル（一覧）を更新
@@ -292,7 +362,7 @@ def _update_parent_admin_modal(client, view_id, workspace_id):
     try:
         from resources.services.group_service import GroupService
         from resources.services.workspace_service import WorkspaceService
-        from resources.views.modal_views import create_admin_settings_modal
+        from resources.templates.modals import create_admin_settings_modal
         
         group_service = GroupService()
         workspace_service = WorkspaceService()
@@ -301,8 +371,7 @@ def _update_parent_admin_modal(client, view_id, workspace_id):
         admin_ids = workspace_service.get_admin_ids(workspace_id)
         groups = group_service.get_all_groups(workspace_id)
         
-        # 2. 【ここが漏れていました】表示名マップを生成
-        # すべてのグループメンバーと管理者のIDを抽出
+        # 表示名マップを生成
         all_user_ids = set(admin_ids)
         for g in groups:
             all_user_ids.update(g.get("member_ids", []))
@@ -314,16 +383,19 @@ def _update_parent_admin_modal(client, view_id, workspace_id):
                 user_info = client.users_info(user=uid)
                 if user_info["ok"]:
                     profile = user_info["user"]["profile"]
-                    # 表示名(display_name)を優先、なければ本名(real_name)
-                    user_name_map[uid] = profile.get("display_name") or profile.get("real_name") or uid
+                    user_name_map[uid] = (
+                        profile.get("display_name") or 
+                        profile.get("real_name") or 
+                        uid
+                    )
             except Exception:
-                user_name_map[uid] = uid # 失敗時はID
+                user_name_map[uid] = uid
 
-        # 3. マップを渡してモーダルを再生成
+        # モーダルを再生成
         view = create_admin_settings_modal(
             admin_ids=admin_ids, 
             groups=groups, 
-            user_name_map=user_name_map  # ← これを渡す
+            user_name_map=user_name_map
         )
         
         # 更新

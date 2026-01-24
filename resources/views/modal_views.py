@@ -1,13 +1,48 @@
 """
-Slack UI（Block Kit）ビュー構築モジュール
+Slack UI（Block Kit）ビュー構築モジュール（後方互換性レイヤー）
 
-このモジュールは、Slackのモーダル、メッセージカード、アクションボタンなどの
-Block Kit JSONを生成します。ビジネスロジックは含まず、純粋にUI構造のみを担当します。
+このモジュールは既存のコードとの互換性を保つため、
+新しいtemplatesモジュールから関数をインポートして再エクスポートします。
 """
 import datetime
 import json
 from typing import Dict, Any, Optional, List
-from constants import STATUS_TRANSLATION, SECTION_TRANSLATION
+from resources.constants import STATUS_TRANSLATION, SECTION_TRANSLATION
+
+# 新しいモジュールからインポート
+from resources.templates.modals import (
+    build_attendance_modal as create_attendance_modal_view,
+    build_history_modal as create_history_modal_view,
+    build_delete_confirm_modal as create_attendance_delete_confirm_modal,
+    build_admin_settings_modal as create_admin_settings_modal,
+    build_add_group_modal as create_add_group_modal,
+    build_edit_group_modal as create_edit_group_modal,
+    build_member_delete_confirm_modal as create_member_delete_confirm_modal,
+    build_setup_message as create_setup_message_blocks
+)
+
+from resources.templates.cards import (
+    build_attendance_card as create_attendance_card_blocks
+)
+
+# 旧関数の呼び出しを新関数にラップ
+# create_attendance_modal_view は既に互換性があるので、そのまま
+
+
+# ==========================================
+# 旧関数名でのエクスポート（後方互換性）
+# ==========================================
+__all__ = [
+    'create_attendance_modal_view',
+    'create_history_modal_view',
+    'create_attendance_delete_confirm_modal',
+    'create_admin_settings_modal',
+    'create_add_group_modal',
+    'create_edit_group_modal',
+    'create_member_delete_confirm_modal',
+    'create_setup_message_blocks',
+    'create_attendance_card_blocks',
+]
 
 # ==========================================
 # 1. 勤怠入力/編集モーダル
