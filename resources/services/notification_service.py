@@ -89,7 +89,7 @@ class NotificationService:
             
             # msg_text = "勤怠記録を更新しました" if is_update else "勤怠を記録しました"
             action_label = "更新" if is_update else "記録"
-            msg_text = f"ⓘ *{display_name}* さんの勤怠連絡を{action_label}しました"
+            msg_text = f"ⓘ {display_name}さんの勤怠連絡を{action_label}しました"
             
             self.client.chat_postMessage(
                 channel=channel,
