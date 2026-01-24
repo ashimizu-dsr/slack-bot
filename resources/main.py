@@ -31,13 +31,13 @@ from google.cloud import firestore  # ← これを try の外、トップレベ
 import slack_bolt
 from slack_bolt import App
 
-# どこまで読み込めているかログに出す
-print(f"DEBUG: slack_bolt version: {slack_bolt.__version__}", file=sys.stderr)
-try:
-    from slack_bolt.oauth import OAuthSettings
-    print("DEBUG: OAuthSettings import success", file=sys.stderr)
-except Exception as e:
-    print(f"DEBUG: OAuthSettings import failed: {e}", file=sys.stderr)
+# # どこまで読み込めているかログに出す
+# print(f"DEBUG: slack_bolt version: {slack_bolt.__version__}", file=sys.stderr)
+# try:
+#     from slack_bolt.oauth import OAuthSettings
+#     print("DEBUG: OAuthSettings import success", file=sys.stderr)
+# except Exception as e:
+#     print(f"DEBUG: OAuthSettings import failed: {e}", file=sys.stderr)
 
 
 # from slack_bolt import App
