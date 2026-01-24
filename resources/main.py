@@ -42,7 +42,6 @@ from slack_sdk import WebClient
 # OAuth関連
 from slack_bolt.oauth.oauth_settings import OAuthSettings
 from slack_sdk.oauth.installation_store import InstallationStore, Installation, Bot
-from slack_sdk.oauth.state_store import FileOAuthStateStore
 
 # 自作モジュール
 from resources.services.attendance_service import AttendanceService
@@ -205,11 +204,8 @@ if enable_oauth:
                     "im:history",
                     "groups:history"
                 ],
-                installation_store=FirestoreInstallationStore(db_client),
-                state_store=FileOAuthStateStore(
-                    expiration_seconds=600,
-                    base_dir="/tmp/slack_oauth_states"
-                )
+                installation_store=FirestoreInstallationStore(db_client)
+                # state_store を指定しない → デフォルトの CookieStateStore を使用
             )
             logger.info("OAuth settings configured successfully")
         except Exception as e:
