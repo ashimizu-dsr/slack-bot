@@ -31,7 +31,7 @@ from google.cloud import firestore  # ← これを try の外、トップレベ
 from slack_bolt import App
 from slack_bolt.oauth.oauth_settings import OAuthSettings
 from slack_bolt.adapter.google_cloud_functions import SlackRequestHandler
-from slack_bolt.adapter.firestore import FirestoreInstallationStore
+from slack_bolt.oauth.installation_store.firestore import FirestoreInstallationStore
 from slack_sdk import WebClient
 
 
@@ -54,6 +54,10 @@ if PUBSUB_ENABLED:
     except Exception as e:
         print(f"DEBUG: Pub/Sub import error: {e}", file=sys.stderr)
         PUBSUB_ENABLED = False
+
+import pkg_resources
+installed_packages = [d.project_name for d in pkg_resources.working_set]
+print(f"DEBUG: Installed packages: {installed_packages}", file=sys.stderr)
 
 # ==========================================
 # 初期化
