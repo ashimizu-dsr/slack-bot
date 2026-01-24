@@ -27,14 +27,47 @@ logger = logging.getLogger(__name__)
 
 from google.cloud import firestore  # ← これを try の外、トップレベルに置く
 
-# Slack Bolt のインポート
+# 1. 基本ライブラリのインポート
+from google.cloud import firestore
 from slack_bolt import App
 from slack_bolt.oauth.oauth_settings import OAuthSettings
 from slack_bolt.adapter.google_cloud_functions import SlackRequestHandler
-from slack_bolt.oauth.installation_store.firestore import FirestoreInstallationStore
 from slack_sdk import WebClient
 
+# 2. OAuth用のベースクラスをインポート（これらは確実に存在します）
+from slack_bolt.oauth.installation_store import InstallationStore, Installation
+from slack_bolt.oauth.models.bot import Bot
 
+# ==========================================
+# 自前で定義する Firestore 保存クラス
+# (ModuleNotFoundErrorを避けるため、公式アダプタを使いません)
+# ==========================================
+class MyFirestoreInstallationStore(InstallationStore):
+    def __init__(self, client):
+        self.db = client
+
+    def save(self, installation: Installation):
+        # インストール情報をFirestoreに保存
+        team_id = installation.team_id
+        self.db.collection("workspaces").document(team_id).set({
+            "bot_token": installation.bot_token,
+            "team_name": installation.team_name,
+            "enterprise_id": installation.enterprise_id,
+            "installed_at": datetime.datetime.now()
+        })
+
+    def find_bot(self, enterprise_id=None, team_id=None, is_enterprise_install=False):
+        # DBからワークスペース情報を取得
+        if not team_id: return None
+        doc = self.db.collection("workspaces").document(team_id).get()
+        if doc.exists:
+            data = doc.to_dict()
+            return Bot(
+                bot_token=data["bot_token"],
+                bot_id="dummy", # Bolt内部で自動更新されるためdummyでOK
+                team_id=team_id
+            )
+        return None
 
 # 自作モジュールの読み込み
 from resources.shared.setup_logger import setup_logger
@@ -63,35 +96,30 @@ print(f"DEBUG: Installed packages: {installed_packages}", file=sys.stderr)
 # 初期化
 # ==========================================
 
-# 1. ログとDBの準備（起動時に1回だけ実行される）
+# 1. ログとDBの準備
 setup_logger()
 init_db()
 
-print("Starting slack_bot application...", file=sys.stderr)
+# Firestoreクライアント作成
+db_client = firestore.Client()
 
-# Firestore インスタンスの取得 (init_dbで初期化済みの前提)
-db = firestore.Client()
+# 2. 保存ロジックの適用
+installation_store = MyFirestoreInstallationStore(client=db_client)
 
-# インストール情報をFirestoreに自動保存する設定
-installation_store = FirestoreInstallationStore(
-    database=db, 
-    collection="workspaces"
-)
-
-# OAuthの挙動設定
+# 3. OAuthの設定
 oauth_settings = OAuthSettings(
     client_id=os.environ.get("SLACK_CLIENT_ID"),
     client_secret=os.environ.get("SLACK_CLIENT_SECRET"),
-    scopes=["chat:write", "commands", "users:read", "groups:read"], # 必要な権限を列挙
+    scopes=["chat:write", "commands", "users:read", "groups:read", "channels:read"],
     installation_store=installation_store,
     install_path="/slack/install",
     redirect_uri_path="/slack/oauth_redirect",
 )
 
-# 2. Slackアプリの準備（マルチテナント対応: tokenなし）
+# 4. Appの初期化
 app = App(
     signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
-    oauth_settings=oauth_settings, # ←ここを追加
+    oauth_settings=oauth_settings,
     process_before_response=False
 )
 
