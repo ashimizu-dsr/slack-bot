@@ -344,7 +344,7 @@ class NotificationService:
             profile = user_data.get("profile", {})
 
             # 【重要】デバッグ用ログ：何が取得できているか出力
-            logger.info(f"[DEBUG_NAME] UserID: {clean_user_id}, "
+            logger.error(f"[DEBUG_NAME] UserID: {clean_user_id}, "
                         f"DN: '{profile.get('display_name')}', "
                         f"RN_Prof: '{profile.get('real_name')}', "
                         f"RN_Top: '{user_data.get('real_name')}'")
@@ -362,7 +362,7 @@ class NotificationService:
             return clean_user_id
             
         except Exception as e:
-            logger.warning(f"ユーザー名取得失敗: {user_id}, {e}", exc_info=True)
+            logger.error(f"ユーザー名取得失敗: {user_id}, {e}", exc_info=True)
             # エラー時も極力 @ 抜きを返す
             return user_id.replace("<@", "").replace(">", "").split("|")[0] if user_id else "Unknown"
             
