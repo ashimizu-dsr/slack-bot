@@ -50,6 +50,9 @@ def build_attendance_card(
             "text": {"type": "mrkdwn", "text": f"* {date_val} [ {status_jp} ]*{f'\n  {note_val}' if note_val else ''}"}
         }
     ]
+
+    # show_buttons = True  # 二次開発時にこちらに戻す
+    show_buttons = False
     
     if show_buttons:
         blocks.append({
