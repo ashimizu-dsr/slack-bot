@@ -2,29 +2,42 @@
 Listeners package - Slack event receivers
 
 このパッケージは、Slackからのイベントを受け取るリスナーを提供します。
-各リスナーは責務ごとに分離されています。
+各リスナーは責務ごとに分離され、Pub/Sub対応で非同期処理を実現しています。
 """
 
-from .attendance_listener import register_attendance_listeners
-from .system_listener import register_system_listeners
-from .admin_listener import register_admin_listeners
+from resources.listeners.attendance_listener import AttendanceListener
+from resources.listeners.system_listener import SystemListener
+from resources.listeners.admin_listener import AdminListener
 
 
-def register_all_listeners(app, attendance_service, notification_service, dispatcher=None):
+def register_all_listeners(app, attendance_service):
     """
     全てのリスナーを登録します。
     
     Args:
         app: Slack Bolt Appインスタンス
         attendance_service: AttendanceServiceインスタンス
-        notification_service: NotificationServiceインスタンス
-        dispatcher: InteractionDispatcherインスタンス（Pub/Sub非同期処理用、オプション）
+    
+    Returns:
+        dict: action_type -> Listenerインスタンスのマッピング
     """
     # 1. 勤怠操作（投稿・修正・削除）
-    register_attendance_listeners(app, attendance_service, notification_service, dispatcher)
+    attendance_listener = AttendanceListener(attendance_service)
+    attendance_listener.handle_sync(app)
     
     # 2. システムイベント（Bot参加など）
-    register_system_listeners(app)
+    system_listener = SystemListener()
+    system_listener.handle_sync(app)
     
     # 3. 管理機能（レポート設定、グループ管理）
-    register_admin_listeners(app)
+    admin_listener = AdminListener()
+    admin_listener.handle_sync(app)
+    
+    # Pub/Sub処理用のマッピングを返す
+    listener_map = {
+        "AttendanceListener": attendance_listener,
+        "SystemListener": system_listener,
+        "AdminListener": admin_listener
+    }
+    
+    return listener_map
