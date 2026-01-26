@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 # Firestore
 from google.cloud import firestore
 from resources.shared.db import init_db
+from resources.constants import get_collection_name
 
 # Slack Bolt
 from slack_bolt import App
@@ -95,7 +96,7 @@ class FirestoreInstallationStore(InstallationStore):
                 "updated_at": firestore.SERVER_TIMESTAMP
             }
             
-            self.db.collection("workspaces").document(team_id).set(data, merge=True)
+            self.db.collection(get_collection_name("workspaces")).document(team_id).set(data, merge=True)
             logger.info(f"Installation saved to Firestore: team_id={team_id}, team_name={installation.team_name}")
             
         except Exception as e:
@@ -127,7 +128,7 @@ class FirestoreInstallationStore(InstallationStore):
                 logger.warning("team_id is None, cannot find installation")
                 return None
             
-            doc = self.db.collection("workspaces").document(team_id).get()
+            doc = self.db.collection(get_collection_name("workspaces")).document(team_id).get()
             
             if not doc.exists:
                 logger.warning(f"Installation not found: team_id={team_id}")
@@ -381,7 +382,7 @@ def slack_bot(request):
             today_str = datetime.datetime.now(JST).date().isoformat()
             
             # マルチテナント対応: 全ワークスペースに対してレポートを送信
-            workspaces_docs = db_client.collection("workspaces").stream()
+            workspaces_docs = db_client.collection(get_collection_name("workspaces")).stream()
             
             success_count = 0
             error_count = 0

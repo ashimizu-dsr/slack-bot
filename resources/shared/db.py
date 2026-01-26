@@ -10,6 +10,8 @@ import logging
 from typing import Optional, List, Dict, Any
 from google.cloud import firestore
 
+from resources.constants import get_collection_name
+
 logger = logging.getLogger(__name__)
 
 # Firestoreクライアントのグローバルインスタンス
@@ -33,7 +35,7 @@ def init_db() -> None:
     """
     logger.info("Initializing Firestore database connection...")
     try:
-        db.collection('system_metadata').document('init_check').get()
+        db.collection(get_collection_name('system_metadata')).document('init_check').get()
         logger.info("Firestore connectivity check: OK")
     except Exception as e:
         logger.warning(f"Firestore connectivity check hint: {e}")
@@ -67,7 +69,7 @@ def save_attendance_record(
     try:
         # ドキュメントID: {workspace_id}_{user_id}_{date}
         doc_id = f"{workspace_id}_{user_id}_{date}"
-        doc_ref = db.collection("attendance").document(doc_id)
+        doc_ref = db.collection(get_collection_name("attendance")).document(doc_id)
         
         data = {
             "workspace_id": workspace_id,
@@ -103,7 +105,7 @@ def get_single_attendance_record(workspace_id: str, user_id: str, date: str) -> 
     """
     try:
         doc_id = f"{workspace_id}_{user_id}_{date}"
-        doc = db.collection("attendance").document(doc_id).get()
+        doc = db.collection(get_collection_name("attendance")).document(doc_id).get()
         if doc.exists:
             return doc.to_dict()
         return None
@@ -134,7 +136,7 @@ def get_user_history_from_db(
     """
     try:
         # workspace_idでフィルタリングを開始
-        query = db.collection("attendance").where("workspace_id", "==", workspace_id)
+        query = db.collection(get_collection_name("attendance")).where("workspace_id", "==", workspace_id)
         
         # emailが存在する場合は優先的に使用（複数デバイスでの同一性確保）
         if email:
@@ -167,7 +169,7 @@ def delete_attendance_record_db(workspace_id: str, user_id: str, date: str) -> N
     """
     try:
         doc_id = f"{workspace_id}_{user_id}_{date}"
-        db.collection("attendance").document(doc_id).delete()
+        db.collection(get_collection_name("attendance")).document(doc_id).delete()
         logger.info(f"Deleted attendance record: {doc_id}")
     except Exception as e:
         logger.error(f"Error deleting record: {e}", exc_info=True)
@@ -190,7 +192,7 @@ def get_channel_members_with_section(workspace_id: Optional[str] = None) -> tupl
         将来的には workspace_id ごとに異なる設定を保存する想定です。
     """
     try:
-        doc = db.collection("system_metadata").document("member_config").get()
+        doc = db.collection(get_collection_name("system_metadata")).document("member_config").get()
         if not doc.exists:
             logger.info("Member config not found, returning empty configuration")
             return {}, "0"
@@ -231,7 +233,7 @@ def save_channel_members_db(
         Exception: Firestore書き込みに失敗した場合
     """
     try:
-        doc_ref = db.collection("system_metadata").document("member_config")
+        doc_ref = db.collection(get_collection_name("system_metadata")).document("member_config")
         new_version = datetime.datetime.now().isoformat()
         
         # TODO: 楽観的ロックの実装
@@ -270,7 +272,7 @@ def get_today_records(workspace_id: str, date_str: Optional[str] = None) -> List
         target_date = date_str or datetime.datetime.now().strftime("%Y-%m-%d")
         
         # workspace_idとdateの複合クエリ
-        docs = db.collection("attendance")\
+        docs = db.collection(get_collection_name("attendance"))\
                  .where("workspace_id", "==", workspace_id)\
                  .where("date", "==", target_date).stream()
         
@@ -320,7 +322,7 @@ def get_attendance_records_by_sections(
             logger.warning(f"Member count ({len(member_ids)}) exceeds Firestore IN clause limit (30). Truncating.")
             member_ids = member_ids[:30]
         
-        docs = db.collection("attendance")\
+        docs = db.collection(get_collection_name("attendance"))\
                  .where("workspace_id", "==", workspace_id)\
                  .where("date", "==", target_date)\
                  .where("user_id", "in", member_ids)\
@@ -357,7 +359,7 @@ def get_workspace_config(team_id: str) -> Optional[Dict[str, Any]]:
         存在しない場合はNone
     """
     try:
-        doc = db.collection("workspaces").document(team_id).get()
+        doc = db.collection(get_collection_name("workspaces")).document(team_id).get()
         
         if not doc.exists:
             logger.warning(f"ワークスペース設定が見つかりません: {team_id}")
@@ -390,7 +392,7 @@ def save_workspace_config(
         Exception: Firestore書き込みに失敗した場合
     """
     try:
-        doc_ref = db.collection("workspaces").document(team_id)
+        doc_ref = db.collection(get_collection_name("workspaces")).document(team_id)
         
         doc_ref.set({
             "team_id": team_id,

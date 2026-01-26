@@ -20,6 +20,35 @@ load_dotenv()
 # 1. 全ワークスペース共通の定数
 # ==========================================
 
+# アプリケーション環境（production / develop）
+APP_ENV = os.environ.get("APP_ENV", "develop")
+
+
+def get_collection_name(base_name: str) -> str:
+    """
+    環境変数に応じたFirestoreコレクション名を返します。
+    
+    Args:
+        base_name: ベースとなるコレクション名（例: "attendance", "users", "workspaces", "groups"）
+        
+    Returns:
+        環境に応じたコレクション名:
+        - production: base_name をそのまま返す
+        - develop: base_name + "_dev" を返す
+        
+    Examples:
+        >>> os.environ["APP_ENV"] = "production"
+        >>> get_collection_name("attendance")
+        'attendance'
+        >>> os.environ["APP_ENV"] = "develop"
+        >>> get_collection_name("attendance")
+        'attendance_dev'
+    """
+    if APP_ENV == "production":
+        return base_name
+    else:
+        return f"{base_name}_dev"
+
 # 勤怠ステータスの日本語訳
 STATUS_TRANSLATION = {
     "late": "遅刻",

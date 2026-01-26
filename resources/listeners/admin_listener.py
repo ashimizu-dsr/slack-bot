@@ -17,6 +17,7 @@ from resources.services.group_service import GroupService
 from resources.services.workspace_service import WorkspaceService
 from resources.templates.modals import create_admin_settings_modal
 from resources.clients.slack_client import get_slack_client
+from resources.constants import get_collection_name
 
 logger = logging.getLogger(__name__)
 
@@ -316,8 +317,8 @@ class AdminListener(Listener):
                 # グループを削除
                 from google.cloud import firestore
                 db = firestore.Client()
-                group_ref = db.collection("groups").document(workspace_id)\
-                              .collection("groups").document(group_id)
+                group_ref = db.collection(get_collection_name("groups")).document(workspace_id)\
+                              .collection(get_collection_name("groups")).document(group_id)
                 group_ref.delete()
                 logger.info(f"グループ削除: {group_name} ({group_id})")
                 

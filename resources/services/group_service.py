@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Optional
 from google.cloud import firestore
 
 from resources.shared.errors import ValidationError
+from resources.constants import get_collection_name
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ class GroupService:
             ]
         """
         try:
-            groups_ref = self.db.collection("groups").document(workspace_id).collection("groups")
+            groups_ref = self.db.collection(get_collection_name("groups")).document(workspace_id).collection(get_collection_name("groups"))
             docs = groups_ref.stream()
             
             groups = []
@@ -79,8 +80,8 @@ class GroupService:
             グループ情報の辞書（存在しない場合はNone）
         """
         try:
-            group_ref = self.db.collection("groups").document(workspace_id)\
-                                .collection("groups").document(group_id)
+            group_ref = self.db.collection(get_collection_name("groups")).document(workspace_id)\
+                                .collection(get_collection_name("groups")).document(group_id)
             doc = group_ref.get()
             
             if not doc.exists:
@@ -129,8 +130,8 @@ class GroupService:
         
         try:
             group_id = f"group_{uuid.uuid4()}"
-            group_ref = self.db.collection("groups").document(workspace_id)\
-                                .collection("groups").document(group_id)
+            group_ref = self.db.collection(get_collection_name("groups")).document(workspace_id)\
+                                .collection(get_collection_name("groups")).document(group_id)
             
             data = {
                 "group_id": group_id,
@@ -163,8 +164,8 @@ class GroupService:
             ValidationError: グループが存在しない場合
         """
         try:
-            group_ref = self.db.collection("groups").document(workspace_id)\
-                                .collection("groups").document(group_id)
+            group_ref = self.db.collection(get_collection_name("groups")).document(workspace_id)\
+                                .collection(get_collection_name("groups")).document(group_id)
             
             # 存在確認
             if not group_ref.get().exists:
@@ -200,8 +201,8 @@ class GroupService:
             raise ValidationError("グループ名が空です", "⚠️ グループ名を入力してください。")
         
         try:
-            group_ref = self.db.collection("groups").document(workspace_id)\
-                                .collection("groups").document(group_id)
+            group_ref = self.db.collection(get_collection_name("groups")).document(workspace_id)\
+                                .collection(get_collection_name("groups")).document(group_id)
             
             # 存在確認
             if not group_ref.get().exists:
@@ -240,8 +241,8 @@ class GroupService:
             return None
         
         try:
-            groups_ref = self.db.collection("groups").document(workspace_id)\
-                                .collection("groups")
+            groups_ref = self.db.collection(get_collection_name("groups")).document(workspace_id)\
+                                .collection(get_collection_name("groups"))
             query = groups_ref.where("name", "==", name.strip()).limit(1)
             docs = list(query.stream())
             
@@ -268,8 +269,8 @@ class GroupService:
             v2.22で正式実装されました。
         """
         try:
-            group_ref = self.db.collection("groups").document(workspace_id)\
-                                .collection("groups").document(group_id)
+            group_ref = self.db.collection(get_collection_name("groups")).document(workspace_id)\
+                                .collection(get_collection_name("groups")).document(group_id)
             
             # 存在確認
             if not group_ref.get().exists:
@@ -324,8 +325,8 @@ class GroupService:
             raise ValidationError("グループ名が無効です", "⚠️ 有効なグループ名を入力してください。")
         
         try:
-            group_ref = self.db.collection("groups").document(workspace_id)\
-                                .collection("groups").document(sanitized_name)
+            group_ref = self.db.collection(get_collection_name("groups")).document(workspace_id)\
+                                .collection(get_collection_name("groups")).document(sanitized_name)
             
             # 既存チェック
             if group_ref.get().exists:
@@ -372,8 +373,8 @@ class GroupService:
             ValidationError: グループが存在しない場合
         """
         try:
-            group_ref = self.db.collection("groups").document(workspace_id)\
-                                .collection("groups").document(group_id)
+            group_ref = self.db.collection(get_collection_name("groups")).document(workspace_id)\
+                                .collection(get_collection_name("groups")).document(group_id)
             
             # 存在確認
             if not group_ref.get().exists:
@@ -405,8 +406,8 @@ class GroupService:
             ValidationError: グループが存在しない場合
         """
         try:
-            group_ref = self.db.collection("groups").document(workspace_id)\
-                                .collection("groups").document(group_id)
+            group_ref = self.db.collection(get_collection_name("groups")).document(workspace_id)\
+                                .collection(get_collection_name("groups")).document(group_id)
             
             # 存在確認
             if not group_ref.get().exists:
