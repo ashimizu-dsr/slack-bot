@@ -11,6 +11,12 @@
 import json
 import logging
 
+# インポートはなるべく関数の外で行う（実行時のオーバーヘッドを減らす）
+from resources.services.group_service import GroupService
+from resources.services.workspace_service import WorkspaceService
+from resources.templates.modals import create_admin_settings_modal
+from resources.clients.slack_client import get_slack_client
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,26 +38,21 @@ def register_admin_listeners(app):
         
         レポート設定モーダル（一覧表示）を開きます。
         """
-        ack()
-        from resources.services.group_service import GroupService
-        from resources.services.workspace_service import WorkspaceService
-        from resources.templates.modals import create_admin_settings_modal
+        # ack() # ここでack()するから1回目開いたらエラーになるのでは？ここで処理が終わるのでは
+        # インポートは関数外で行うこととしました。（実行時のオーバーヘッドを減らす）
         
         team_id = body["team"]["id"]  # マルチテナント対応: team_id を取得
         
         try:
             # マルチテナント対応: team_id に基づいて WebClient を取得
-            from resources.clients.slack_client import get_slack_client
+            # インポートは関数外で行うこととしました。（実行時のオーバーヘッドを減らす）
+
+            # 1. 必要なデータ取得を先に行う
             dynamic_client = get_slack_client(team_id)
-            
             group_service = GroupService()
-            workspace_service = WorkspaceService()
-            
-            # 管理者IDを取得
-            admin_ids = workspace_service.get_admin_ids(team_id)
-            
-            # 全グループを取得
-            groups = group_service.get_all_groups(team_id)
+            workspace_service = WorkspaceService()            
+            admin_ids = workspace_service.get_admin_ids(team_id) # 管理者IDを取得
+            groups = group_service.get_all_groups(team_id) # 全グループを取得
 
             # ユーザー名マップの生成
             all_uids = set(admin_ids)
@@ -82,11 +83,13 @@ def register_admin_listeners(app):
             )
             
             dynamic_client.views_open(trigger_id=body["trigger_id"], view=view)
+            ack() # ここでack()することで、1回目開いたらエラーになるのを防ぐ
             
             logger.info(
                 f"レポート設定モーダル表示(v2.22): Workspace={team_id}, Groups={len(groups)}"
             )
         except Exception as e:
+            ack() # エラーが発生した場合はack()することで、1回目開いたらエラーになるのを防ぐ
             logger.error(f"レポート設定モーダル表示失敗: {e}", exc_info=True)
 
     # ==========================================
@@ -99,20 +102,21 @@ def register_admin_listeners(app):
         
         通知先（admin_ids）のみを保存します。
         """
-        ack()
-        from resources.services.workspace_service import WorkspaceService
+        #ack() # ここでack()すると、1回目開いたらエラーになるのでは？ここで処理が終わるのでは
+        # インポートは関数外で行うこととしました。（実行時のオーバーヘッドを減らす）
         
-        workspace_id = body["team"]["id"]
-        vals = view["state"]["values"]
+        workspace_id = body["team"]["id"] # ワークスペースIDを取得
+        vals = view["state"]["values"] # フォームの入力値を取得
         
         try:
             workspace_service = WorkspaceService()
+            admin_ids = vals["admin_block"]["admin_select"].get("selected_users", []) # 通知先（管理者）IDを取得
             
-            # 通知先（管理者）IDを取得
-            admin_ids = vals["admin_block"]["admin_select"].get("selected_users", [])
-            
-            # 通知先を保存
-            workspace_service.save_admin_ids(workspace_id, admin_ids)
+            # 1. データの保存を「ack」の前に完了させる
+            workspace_service.save_admin_ids(workspace_id, admin_ids) # 通知先を保存
+
+            # 2. 保存が成功してから ack() を返すと、モーダルが正常に閉じる
+            ack() # ここでack()することで、1回目開いたらエラーになるのを防ぐ
             logger.info(f"通知先保存(v2.22): Workspace={workspace_id}, Admins={len(admin_ids)}")
             
         except Exception as e:
