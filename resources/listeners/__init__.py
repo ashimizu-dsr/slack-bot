@@ -6,7 +6,7 @@ Listeners package - Slack event receivers
 """
 
 from resources.listeners.attendance_listener import AttendanceListener
-from resources.listeners.system_listener import SystemListener
+# from resources.listeners.system_listener import SystemListener
 from resources.listeners.admin_listener import AdminListener
 
 
@@ -25,9 +25,9 @@ def register_all_listeners(app, attendance_service):
     attendance_listener = AttendanceListener(attendance_service)
     attendance_listener.handle_sync(app)
     
-    # 2. システムイベント（Bot参加など）
-    system_listener = SystemListener()
-    system_listener.handle_sync(app)
+    # # 2. システムイベント（Bot参加など）
+    # system_listener = SystemListener()
+    # system_listener.handle_sync(app)
     
     # 3. 管理機能（レポート設定、グループ管理）
     admin_listener = AdminListener()
@@ -36,7 +36,7 @@ def register_all_listeners(app, attendance_service):
     # Pub/Sub処理用のマッピングを返す
     listener_map = {
         "AttendanceListener": attendance_listener,
-        "SystemListener": system_listener,
+        # "SystemListener": system_listener,
         "AdminListener": admin_listener
     }
     
