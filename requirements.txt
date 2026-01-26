@@ -14,3 +14,9 @@ openai>=1.0.0
 
 # Utilities
 python-dotenv>=1.0.0
+
+# Google Cloud Pub/Sub (これが抜けています)
+google-cloud-pubsub>=2.18.0
+
+# 構造化ログをGCPに送るために推奨
+google-cloud-logging>=3.5.0
