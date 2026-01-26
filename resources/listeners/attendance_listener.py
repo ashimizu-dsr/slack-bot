@@ -28,6 +28,7 @@ from resources.templates.modals import (
     create_attendance_modal_view,
     create_attendance_delete_confirm_modal
 )
+from resources.shared.setup_logger import log_ai_parse_failure
 
 logger = logging.getLogger(__name__)
 
@@ -344,10 +345,19 @@ class AttendanceListener(Listener):
             client = get_slack_client(team_id)
             email: Optional[str] = get_user_email(client, user_id, logger)
             
-            # 1. AI解析実行
-            extraction = extract_attendance_from_text(text)
+            # 1. AI解析実行（team_id, user_idを渡してコストログを出力）
+            extraction = extract_attendance_from_text(text, team_id=team_id, user_id=user_id)
             
             if not extraction:
+                # AI解析失敗時のログを構造化ログとして出力
+                log_ai_parse_failure(
+                    logger=logger,
+                    team_id=team_id,
+                    channel_id=channel,
+                    user_id=user_id,
+                    text=text,
+                    reason="勤怠データが抽出できませんでした"
+                )
                 logger.info(f"AI: No attendance data extracted from: {text[:20]}...")
                 return
 

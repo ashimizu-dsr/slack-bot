@@ -9,7 +9,7 @@ import json
 import os
 import re
 from typing import Optional, Dict, Any, List
-from resources.shared.setup_logger import setup_logger
+from resources.shared.setup_logger import setup_logger, log_openai_cost
 
 try:
     from openai import OpenAI
@@ -71,12 +71,18 @@ def _format_note(att_data: Dict) -> str:
     
     return str(ai_note).strip()
 
-def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
+def extract_attendance_from_text(
+    text: str, 
+    team_id: Optional[str] = None, 
+    user_id: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     """
     テキストから勤怠情報をAIで抽出します。
     
     Args:
         text: ユーザーが投稿したメッセージ
+        team_id: ワークスペースID（コストログ用、オプション）
+        user_id: ユーザーID（コストログ用、オプション）
         
     Returns:
         抽出結果の辞書:
@@ -123,8 +129,9 @@ def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
         )
 
         # API呼び出し
+        model_name = "gpt-4o-mini"
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=model_name,
             messages=[
                 {"role": "system", "content": system_instruction},
                 {"role": "user", "content": f"Today: {base_date} ({base_date.strftime('%A')})\nText: {clean_text}"}
@@ -132,6 +139,19 @@ def extract_attendance_from_text(text: str) -> Optional[Dict[str, Any]]:
             response_format={"type": "json_object"},
             temperature=0.1
         )
+
+        # OpenAI APIコストのログ出力
+        usage = response.usage
+        if usage:
+            log_openai_cost(
+                logger=logger,
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                model=model_name,
+                team_id=team_id,
+                user_id=user_id
+            )
 
         data = json.loads(response.choices[0].message.content)
         
