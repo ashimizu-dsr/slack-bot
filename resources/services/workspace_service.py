@@ -10,6 +10,7 @@ from typing import List, Dict, Any
 from google.cloud import firestore
 
 from resources.shared.errors import ValidationError
+from resources.constants import get_collection_name
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ class WorkspaceService:
             管理者のユーザーID配列（設定がない場合は空配列）
         """
         try:
-            doc = self.db.collection("workspace_settings").document(workspace_id).get()
+            doc = self.db.collection(get_collection_name("workspace_settings")).document(workspace_id).get()
             
             if not doc.exists:
                 logger.info(f"ワークスペース設定が存在しません: {workspace_id}")
@@ -69,7 +70,7 @@ class WorkspaceService:
             )
         
         try:
-            doc_ref = self.db.collection("workspace_settings").document(workspace_id)
+            doc_ref = self.db.collection(get_collection_name("workspace_settings")).document(workspace_id)
             
             # 既存ドキュメントの有無に関わらず、mergeでupsert
             doc_ref.set({
@@ -99,7 +100,7 @@ class WorkspaceService:
             }
         """
         try:
-            doc = self.db.collection("workspace_settings").document(workspace_id).get()
+            doc = self.db.collection(get_collection_name("workspace_settings")).document(workspace_id).get()
             
             if not doc.exists:
                 logger.info(f"ワークスペース設定が存在しません: {workspace_id}")
