@@ -356,7 +356,11 @@ def get_workspace_config(team_id: str) -> Optional[Dict[str, Any]]:
             "report_channel_id": "C01234567",
             "installed_at": "2026-01-24T10:00:00"
         }
-        存在しない場合はNone
+        存在しない場合やエラー時はNone
+        
+    Note:
+        データベース接続エラーやFirestoreエラーが発生した場合は、
+        安全にNoneを返します。
     """
     try:
         doc = db.collection(get_collection_name("workspaces")).document(team_id).get()
@@ -366,6 +370,10 @@ def get_workspace_config(team_id: str) -> Optional[Dict[str, Any]]:
             return None
         
         data = doc.to_dict()
+        if not data:
+            logger.warning(f"ワークスペース設定が空です: {team_id}")
+            return None
+        
         logger.info(f"ワークスペース設定取得成功: {team_id}")
         return data
     except Exception as e:

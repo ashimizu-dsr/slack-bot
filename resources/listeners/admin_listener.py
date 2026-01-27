@@ -54,13 +54,24 @@ class AdminListener(Listener):
             try:
                 dynamic_client = get_slack_client(team_id)
                 group_service = GroupService()
-                workspace_service = WorkspaceService()            
-                admin_ids = workspace_service.get_admin_ids(team_id)
-                groups = group_service.get_all_groups(team_id)
+                workspace_service = WorkspaceService()
+                
+                # データ取得（エラー時は初期値）
+                try:
+                    admin_ids = workspace_service.get_admin_ids(team_id)
+                except Exception as e:
+                    logger.error(f"管理者ID取得失敗: {e}", exc_info=True)
+                    admin_ids = []
+                
+                try:
+                    groups = group_service.get_all_groups(team_id)
+                except Exception as e:
+                    logger.error(f"グループ取得失敗: {e}", exc_info=True)
+                    groups = []
 
                 # ユーザー名マップの生成（＠付き問題を解決）
-                all_uids = set(admin_ids)
-                for g in groups:
+                all_uids = set(admin_ids or [])
+                for g in (groups or []):
                     all_uids.update(g.get("member_ids", []))
                 
                 user_name_map = {}
@@ -81,20 +92,20 @@ class AdminListener(Listener):
                                     name = name[1:]
                                 user_name_map[u["id"]] = name
                 except Exception as e:
-                    logger.error(f"Failed to fetch user list: {e}")
+                    logger.error(f"ユーザーリスト取得失敗: {e}", exc_info=True)
 
-                # モーダルを生成
+                # モーダルを生成（データが空でもOK）
                 view = create_admin_settings_modal(
-                    admin_ids=admin_ids, 
-                    groups=groups, 
-                    user_name_map=user_name_map
+                    admin_ids=admin_ids or [], 
+                    groups=groups or [], 
+                    user_name_map=user_name_map or {}
                 )
                 
                 dynamic_client.views_open(trigger_id=body["trigger_id"], view=view)
                 ack()
                 
                 logger.info(
-                    f"レポート設定モーダル表示: Workspace={team_id}, Groups={len(groups)}"
+                    f"レポート設定モーダル表示: Workspace={team_id}, Groups={len(groups or [])}, Admins={len(admin_ids or [])}"
                 )
             except Exception as e:
                 ack()
@@ -206,7 +217,11 @@ class AdminListener(Listener):
                 
                 if action_type == "edit":
                     # 編集モーダルを表示
-                    group = group_service.get_group_by_id(workspace_id, group_id)
+                    try:
+                        group = group_service.get_group_by_id(workspace_id, group_id)
+                    except Exception as e:
+                        logger.error(f"グループ取得失敗: {e}", exc_info=True)
+                        group = None
                     
                     if not group:
                         logger.error(f"グループが見つかりません: {group_id}")
@@ -214,8 +229,8 @@ class AdminListener(Listener):
                         return
                     
                     view = create_edit_group_modal(
-                        group_id=group["group_id"],
-                        group_name=group["name"],
+                        group_id=group.get("group_id", group_id),
+                        group_name=group.get("name", ""),
                         member_ids=group.get("member_ids", [])
                     )
                     
@@ -224,7 +239,11 @@ class AdminListener(Listener):
                     
                 elif action_type == "delete":
                     # 削除確認モーダルを表示
-                    group = group_service.get_group_by_id(workspace_id, group_id)
+                    try:
+                        group = group_service.get_group_by_id(workspace_id, group_id)
+                    except Exception as e:
+                        logger.error(f"グループ取得失敗: {e}", exc_info=True)
+                        group = None
                     
                     if not group:
                         logger.error(f"グループが見つかりません: {group_id}")
@@ -232,8 +251,8 @@ class AdminListener(Listener):
                         return
                     
                     view = create_member_delete_confirm_modal(
-                        group_id=group["group_id"],
-                        group_name=group["name"]
+                        group_id=group.get("group_id", group_id),
+                        group_name=group.get("name", "")
                     )
                     
                     client.views_push(trigger_id=body["trigger_id"], view=view)
@@ -364,13 +383,22 @@ class AdminListener(Listener):
             group_service = GroupService()
             workspace_service = WorkspaceService()
             
-            # 最新データを取得
-            admin_ids = workspace_service.get_admin_ids(workspace_id)
-            groups = group_service.get_all_groups(workspace_id)
+            # 最新データを取得（エラー時は初期値）
+            try:
+                admin_ids = workspace_service.get_admin_ids(workspace_id)
+            except Exception as e:
+                logger.error(f"管理者ID取得失敗（更新時）: {e}", exc_info=True)
+                admin_ids = []
+            
+            try:
+                groups = group_service.get_all_groups(workspace_id)
+            except Exception as e:
+                logger.error(f"グループ取得失敗（更新時）: {e}", exc_info=True)
+                groups = []
             
             # 表示名マップを生成（＠付き問題を解決）
-            all_user_ids = set(admin_ids)
-            for g in groups:
+            all_user_ids = set(admin_ids or [])
+            for g in (groups or []):
                 all_user_ids.update(g.get("member_ids", []))
                 
             user_name_map = {}
@@ -392,15 +420,15 @@ class AdminListener(Listener):
                 except Exception:
                     user_name_map[uid] = uid
 
-            # モーダルを再生成
+            # モーダルを再生成（データが空でもOK）
             view = create_admin_settings_modal(
-                admin_ids=admin_ids, 
-                groups=groups, 
-                user_name_map=user_name_map
+                admin_ids=admin_ids or [], 
+                groups=groups or [], 
+                user_name_map=user_name_map or {}
             )
             
             # 更新
             client.views_update(view_id=view_id, view=view)
-            logger.info(f"親モーダル更新成功: Groups={len(groups)}")
+            logger.info(f"親モーダル更新成功: Groups={len(groups or [])}, Admins={len(admin_ids or [])}")
         except Exception as e:
             logger.error(f"親モーダル更新失敗: {e}", exc_info=True)

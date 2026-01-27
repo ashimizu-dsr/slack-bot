@@ -59,9 +59,16 @@ class AttendanceService:
         """
         サービスの初期化。
         
-        有効なステータスのリストを定義します。
+        有効なステータスのリストを定義します（最新ルール 2026-01-27）。
         """
-        self.valid_statuses = ["late", "early_leave", "out", "remote", "vacation", "other"]
+        self.valid_statuses = [
+            "vacation", "vacation_am", "vacation_pm", "vacation_hourly",
+            "late", "late_delay",
+            "early_leave",
+            "out",
+            "remote", "shift",
+            "other"
+        ]
 
     def save_attendance(
         self, 

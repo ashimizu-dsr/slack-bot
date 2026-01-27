@@ -18,13 +18,29 @@ except ImportError:
 
 logger = setup_logger(__name__)
 
-# ステータスのエイリアス定義（正規化用）
+# ステータスのエイリアス定義（正規化用）- 最新ルール 2026-01-27
 STATUS_ALIASES = {
-    "late": {"late", "遅刻", "遅れ", "遅延"},
-    "early_leave": {"early_leave", "早退"},
-    "out": {"out", "外出"},
-    "remote": {"remote", "在宅", "リモート", "テレワーク"},
-    "vacation": {"vacation", "休暇", "休み", "欠勤", "有給", "お休み"},
+    # 休暇（細分化）
+    "vacation": {"vacation", "休暇", "休み", "欠勤", "有給", "お休み", "全休"},
+    "vacation_am": {"vacation_am", "am休", "午前休", "午前半休"},
+    "vacation_pm": {"vacation_pm", "pm休", "午後休", "午後半休"},
+    "vacation_hourly": {"vacation_hourly", "時間休", "時休"},
+    
+    # 外出（場所を問わず）
+    "out": {"out", "外出", "直行", "直帰", "外勤", "情報センター", "楽天損保"},
+    
+    # 遅刻（細分化）
+    "late_delay": {"late_delay", "電車遅延", "遅延", "遅延証明", "交通乱れ", "交通トラブル"},
+    "late": {"late", "遅刻", "遅れ"},
+    
+    # 勤務
+    "remote": {"remote", "在宅", "リモート", "テレワーク", "在宅勤務"},
+    "shift": {"shift", "シフト", "交代勤務", "シフト勤務"},
+    
+    # 退勤
+    "early_leave": {"early_leave", "早退", "退勤", "早帰り"},
+    
+    # その他
     "other": {"other", "未分類", "その他"},
 }
 
@@ -115,17 +131,36 @@ def extract_attendance_from_text(
     base_date = datetime.date.today() 
     
     try:
-        # システム指示の定義
+        # システム指示の定義（最新ルール 2026-01-27）
         system_instruction = (
             "You are a professional attendance data extractor. Output JSON only.\n"
-            "Format: { \"is_attendance\": bool, \"attendances\": [{ \"date\": \"YYYY-MM-DD\", \"status\": \"string\", \"start_time\": \"HH:mm\", \"end_time\": \"HH:mm\", \"note\": \"string\", \"action\": \"save\" | \"delete\" }] }\n\n"
-            "Rules:\n"
-            "1. Sensitivity: If the text implies working hours, location (remote/out), or leave, set is_attendance=true.\n"
-            "2. Mapping: '休暇/休み'->'vacation', '外出/直行/直帰/情報センター'->'out', '在宅/リモート'->'remote', '遅刻'->'late', '早退/退勤'->'early_leave'.\n"
-            "3. Strikethroughs (~text~): Crucial. Represents 'old plan'. Prioritize new info following it. Prefix note with '(予定変更)'.\n"
-            "4. Code Blocks (```): Treat as official, high-priority data. Extract all details strictly.\n"
-            "5. Normalization: Convert '8時' to '08:00', '17時半' to '17:30'.\n"
-            "6. Note: Keep specific context like '10:00出勤' or '終日情報センター'. Include '(予定変更)' if it corrects a previous plan."
+            "Format: { \"is_attendance\": bool, \"attendances\": [{ \"date\": \"YYYY-MM-DD\", \"status\": \"string\", \"note\": \"string\", \"action\": \"save\" | \"delete\" }] }\n\n"
+            "=== Status Mapping (細分化ルール) ===\n"
+            "1. 休暇 (vacation):\n"
+            "   - vacation: 全休 (例: '休暇', '有給', 'お休み')\n"
+            "   - vacation_am: 午前休 (例: 'AM休', '午前休')\n"
+            "   - vacation_pm: 午後休 (例: 'PM休', '午後休')\n"
+            "   - vacation_hourly: 時間休 (例: '時間休', '10-12時休')\n"
+            "2. 外出 (out): 場所を問わず外出 (例: '外出', '直行', '直帰', '情報センター', '楽天損保')\n"
+            "3. 遅刻:\n"
+            "   - late_delay: 電車遅延・交通乱れ (例: '電車遅延', '遅延証明', '交通乱れ')\n"
+            "   - late: 一般遅刻 (例: '遅刻', '遅れます')\n"
+            "4. 勤務:\n"
+            "   - remote: 在宅勤務 (例: '在宅', 'リモート', 'テレワーク')\n"
+            "   - shift: シフト勤務 (例: 'シフト', '交代勤務')\n"
+            "5. 退勤: early_leave: 早退・退勤 (例: '早退', '退勤', '16時退社')\n"
+            "6. その他: other (上記以外)\n\n"
+            "=== 抽出精度強化ルール ===\n"
+            "A. 時間・場所の保持: '15時退社', '楽天損保へ外出' など時間や場所は必ず note フィールドに含める。\n"
+            "B. 打ち消し線 (~text~): 変更前の古い情報として扱い、打ち消し線の後の最新情報を優先。note に '(予定変更)' を付与。\n"
+            "C. コードブロック (```): 内部の情報を最優先で厳密に抽出。公式データとして扱う。\n"
+            "D. 時刻正規化: '8時' → '08:00', '17時半' → '17:30' の形式に変換して note に含める。\n"
+            "E. 曖昧な表現: '遅れます' → 'late', '早く帰ります' → 'early_leave' として推測。\n\n"
+            "=== 出力例 ===\n"
+            "Input: '~9時出勤~ 10時出勤します'\n"
+            "Output: { \"is_attendance\": true, \"attendances\": [{ \"date\": \"2026-01-27\", \"status\": \"late\", \"note\": \"10時出勤 (予定変更)\", \"action\": \"save\" }] }\n\n"
+            "Input: '明日15時に楽天損保へ外出します'\n"
+            "Output: { \"is_attendance\": true, \"attendances\": [{ \"date\": \"2026-01-28\", \"status\": \"out\", \"note\": \"15時に楽天損保へ外出\", \"action\": \"save\" }] }"
         )
 
         # API呼び出し

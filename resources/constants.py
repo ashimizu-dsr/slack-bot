@@ -49,13 +49,29 @@ def get_collection_name(base_name: str) -> str:
     else:
         return f"{base_name}_dev"
 
-# 勤怠ステータスの日本語訳
+# 勤怠ステータスの日本語訳（最新ルール 2026-01-27）
 STATUS_TRANSLATION = {
+    # 休暇（細分化）
+    "vacation": "年休（全休）",
+    "vacation_am": "年休（AM）",
+    "vacation_pm": "年休（PM）",
+    "vacation_hourly": "年休（時間）",
+    
+    # 遅刻（細分化）
     "late": "遅刻",
+    "late_delay": "遅刻（遅延）",
+    
+    # 退勤
     "early_leave": "早退",
+    
+    # 外出
     "out": "外出",
+    
+    # 勤務
     "remote": "在宅",
-    "vacation": "年休",
+    "shift": "シフト",
+    
+    # その他
     "other": "その他",
 }
 
