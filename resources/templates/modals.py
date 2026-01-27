@@ -254,6 +254,12 @@ def build_admin_settings_modal(
         for group in groups:
             # 通知先の名前を整形
             admin_ids = group.get("admin_ids", [])
+            
+            # デバッグログ
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"グループ表示: {group.get('name')}, admin_ids={admin_ids}, group_data={group}")
+            
             admin_names = []
             for uid in admin_ids:
                 name = user_name_map.get(uid, f"<@{uid}>")
@@ -316,8 +322,7 @@ def build_admin_settings_modal(
         "type": "modal",
         "callback_id": "admin_settings_modal",
         "title": {"type": "plain_text", "text": "レポート設定", "emoji": True},
-        "submit": {"type": "plain_text", "text": "保存", "emoji": True},
-        "close": {"type": "plain_text", "text": "キャンセル", "emoji": True},
+        "close": {"type": "plain_text", "text": "戻る", "emoji": True},
         "blocks": blocks
     }
 
@@ -400,7 +405,7 @@ def build_edit_group_modal(
         
     Returns:
         Slack モーダルビューの辞書
-    """
+    """ 
     if admin_ids is None:
         admin_ids = []
     
