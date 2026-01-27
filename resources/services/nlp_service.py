@@ -10,6 +10,7 @@ import os
 import re
 from typing import Optional, Dict, Any, List
 from resources.shared.setup_logger import setup_logger, log_openai_cost
+from resources.constants import STATUS_AI_ALIASES  # constantsから読み込む
 
 try:
     from openai import OpenAI
@@ -57,10 +58,19 @@ def _normalize_status(value: str) -> str:
     Note:
         エイリアスに該当しない場合は "other" を返します。
     """
-    val = str(value).lower()
-    for canonical, aliases in STATUS_ALIASES.items():
-        if val in aliases or any(a in val for a in aliases):
+    val = str(value).lower().strip()
+    
+    # 1. まず完全一致を確認（AIが返した status をそのまま使う）
+    for canonical in STATUS_AI_ALIASES.keys():
+        if val == canonical:
             return canonical
+    # 2. 次に、日本語キーワードなどのエイリアスに含まれているか確認
+    # 詳細なステータス（vacation_am等）から先にチェックされるように
+    # STATUS_AI_ALIASES の定義順も重要です
+    for canonical, aliases in STATUS_AI_ALIASES.items():
+        if val in aliases or any(a == val for a in aliases):
+            return canonical
+            
     return "other"
 
 
