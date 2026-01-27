@@ -222,11 +222,11 @@ class NotificationService:
             # レポートブロックの構築
             blocks = []
             
-            # 管理者メンション（plain_text形式、<@UID>はSlackが自動でメンションに変換）
+            # 管理者メンション（mrkdwn形式でメンションが効くようにする）
             if mention_text:
                 blocks.append({
                     "type": "section",
-                    "text": {"type": "plain_text", "text": mention_text, "emoji": True}
+                    "text": {"type": "mrkdwn", "text": mention_text}
                 })
             
             # タイトル（グループ名を含む）
@@ -365,7 +365,7 @@ class NotificationService:
                 })
                 blocks.append({"type": "divider"})
             
-            # 該当者がいない場合
+            # 該当者がいない場合 
             if not status_map:
                 blocks.append({
                     "type": "section",
