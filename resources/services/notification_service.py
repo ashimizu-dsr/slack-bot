@@ -252,7 +252,7 @@ class NotificationService:
                     
                     if st not in status_map:
                         status_map[st] = []
-                    status_map[st].append(f"• {display_name}{note}")
+                    status_map[st].append(f"{display_name}{note}")
 
             if not status_map:
                 blocks.append({
@@ -260,13 +260,59 @@ class NotificationService:
                     "text": {"type": "mrkdwn", "text": "_勤怠連絡はありません_"}
                 })
             else:
-                # 区分（遅刻、休暇など）ごとにブロックを作成
-                for st_key, st_label in STATUS_TRANSLATION.items():
+                from resources.constants import STATUS_ORDER
+                
+                # 大分類ごとにセクションを構築
+                # 1. 休暇
+                vacation_statuses = ["vacation", "vacation_am", "vacation_pm", "vacation_hourly"]
+                vacation_lines = []
+                for st_key in vacation_statuses:
                     if st_key in status_map:
-                        content_text = f"*{st_label}*\n" + "\n".join(status_map[st_key])
+                        st_label = STATUS_TRANSLATION.get(st_key, st_key)
+                        names = ", ".join(status_map[st_key])
+                        vacation_lines.append(f"{st_label}：{names}")
+                
+                if vacation_lines:
+                    blocks.append({
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": "休暇\n" + "\n".join(vacation_lines)}
+                    })
+                
+                # 2. 遅刻
+                late_statuses = ["late_delay", "late"]
+                late_lines = []
+                for st_key in late_statuses:
+                    if st_key in status_map:
+                        st_label = STATUS_TRANSLATION.get(st_key, st_key)
+                        names = ", ".join(status_map[st_key])
+                        late_lines.append(f"{st_label}：{names}")
+                
+                if late_lines:
+                    blocks.append({
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": "遅刻\n" + "\n".join(late_lines)}
+                    })
+                
+                # 3. その他（在宅、外出、シフト勤務）
+                other_statuses = ["remote", "out", "shift"]
+                for st_key in other_statuses:
+                    if st_key in status_map:
+                        st_label = STATUS_TRANSLATION.get(st_key, st_key)
+                        names = ", ".join(status_map[st_key])
                         blocks.append({
                             "type": "section",
-                            "text": {"type": "mrkdwn", "text": content_text}
+                            "text": {"type": "mrkdwn", "text": f"{st_label}：{names}"}
+                        })
+                
+                # 4. 早退・その他（あれば表示）
+                remaining_statuses = ["early_leave", "other"]
+                for st_key in remaining_statuses:
+                    if st_key in status_map:
+                        st_label = STATUS_TRANSLATION.get(st_key, st_key)
+                        names = ", ".join(status_map[st_key])
+                        blocks.append({
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": f"{st_label}：{names}"}
                         })
 
         # 8. メッセージ送信

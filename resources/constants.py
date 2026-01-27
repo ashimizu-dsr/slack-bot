@@ -50,30 +50,39 @@ def get_collection_name(base_name: str) -> str:
         return f"{base_name}_dev"
 
 # 勤怠ステータスの日本語訳（最新ルール 2026-01-27）
+# 表示順: 休暇 > 遅刻 > 在宅 > 外出 > シフト勤務 > その他
 STATUS_TRANSLATION = {
-    # 休暇（細分化）
-    "vacation": "年休（全休）",
-    "vacation_am": "年休（AM）",
-    "vacation_pm": "年休（PM）",
-    "vacation_hourly": "年休（時間）",
+    # 大分類：休暇
+    "vacation": "全休",
+    "vacation_am": "AM休",
+    "vacation_pm": "PM休",
+    "vacation_hourly": "時間休",
     
-    # 遅刻（細分化）
+    # 大分類：遅刻
+    "late_delay": "電車遅延",
     "late": "遅刻",
-    "late_delay": "遅刻（遅延）",
     
-    # 退勤
-    "early_leave": "早退",
-    
-    # 外出
-    "out": "外出",
-    
-    # 勤務
+    # 大分類：その他
     "remote": "在宅",
-    "shift": "シフト",
+    "out": "外出",
+    "shift": "シフト勤務",
     
     # その他
+    "early_leave": "早退",
     "other": "その他",
 }
+
+# レポート表示用のステータス順序（大分類順）
+STATUS_ORDER = [
+    # 休暇
+    "vacation", "vacation_am", "vacation_pm", "vacation_hourly",
+    # 遅刻
+    "late_delay", "late",
+    # その他
+    "remote", "out", "shift",
+    # その他（レポートには通常表示しない）
+    "early_leave", "other"
+]
 
 # 課（セクション）のIDと日本語訳
 SECTION_TRANSLATION = {
