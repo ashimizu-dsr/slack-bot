@@ -265,6 +265,11 @@ class NotificationService:
                     "type": "section",
                     "text": {"type": "mrkdwn", "text": f"*全休：* \n\t{users_text}"}
                 })
+            else:
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "*全休：* \n\tなし"}
+                })
             
             # AM休
             if "vacation_am" in status_map:
@@ -272,6 +277,11 @@ class NotificationService:
                 blocks.append({
                     "type": "section",
                     "text": {"type": "mrkdwn", "text": f"*AM休：* \n\t{users_text}"}
+                })
+            else:
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "*AM休：* \n\tなし"}
                 })
             
             # PM休
@@ -281,6 +291,11 @@ class NotificationService:
                     "type": "section",
                     "text": {"type": "mrkdwn", "text": f"*PM休：* \n\t{users_text}"}
                 })
+            else:
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "*PM休：* \n\tなし"}
+                })
             
             # 時間休
             if "vacation_hourly" in status_map:
@@ -289,10 +304,14 @@ class NotificationService:
                     "type": "section",
                     "text": {"type": "mrkdwn", "text": f"*時間休：* \n\t{users_text}"}
                 })
+            else:
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "*時間休：* \n\tなし"}
+                })
             
             # 休暇系の後に区切り
-            if any(k in status_map for k in ["vacation", "vacation_am", "vacation_pm", "vacation_hourly"]):
-                blocks.append({"type": "divider"})
+            blocks.append({"type": "divider"})
             
             # 電車遅延
             if "late_delay" in status_map:
@@ -300,6 +319,11 @@ class NotificationService:
                 blocks.append({
                     "type": "section",
                     "text": {"type": "mrkdwn", "text": f"*電車遅延：* \n\t{users_text}"}
+                })
+            else:
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "*電車遅延：* \n\tなし"}
                 })
             
             # 遅刻
@@ -309,10 +333,14 @@ class NotificationService:
                     "type": "section",
                     "text": {"type": "mrkdwn", "text": f"*遅刻：* \n\t{users_text}"}
                 })
+            else:
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "*遅刻：* \n\tなし"}
+                })
             
             # 遅刻系の後に区切り
-            if any(k in status_map for k in ["late_delay", "late"]):
-                blocks.append({"type": "divider"})
+            blocks.append({"type": "divider"})
             
             # 在宅
             if "remote" in status_map:
@@ -321,10 +349,14 @@ class NotificationService:
                     "type": "section",
                     "text": {"type": "mrkdwn", "text": f"*在宅：* \n\t{users_text}"}
                 })
+            else:
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "*在宅：* \n\tなし"}
+                })
             
             # 在宅の後に区切り
-            if "remote" in status_map:
-                blocks.append({"type": "divider"})
+            blocks.append({"type": "divider"})
             
             # 外出
             if "out" in status_map:
@@ -333,10 +365,14 @@ class NotificationService:
                     "type": "section",
                     "text": {"type": "mrkdwn", "text": f"*外出：* \n\t{users_text}"}
                 })
+            else:
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "*外出：* \n\tなし"}
+                })
             
             # 外出の後に区切り
-            if "out" in status_map:
-                blocks.append({"type": "divider"})
+            blocks.append({"type": "divider"})
             
             # シフト勤務
             if "shift" in status_map:
@@ -345,7 +381,12 @@ class NotificationService:
                     "type": "section",
                     "text": {"type": "mrkdwn", "text": f"*シフト勤務：* \n\t{users_text}"}
                 })
-                blocks.append({"type": "divider"})
+            else:
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "*シフト勤務：* \n\tなし"}
+                })
+            blocks.append({"type": "divider"})
             
             # 早退
             if "early_leave" in status_map:
@@ -354,7 +395,12 @@ class NotificationService:
                     "type": "section",
                     "text": {"type": "mrkdwn", "text": f"*早退：* \n\t{users_text}"}
                 })
-                blocks.append({"type": "divider"})
+            else:
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "*早退：* \n\tなし"}
+                })
+            blocks.append({"type": "divider"})
             
             # その他
             if "other" in status_map:
@@ -363,14 +409,12 @@ class NotificationService:
                     "type": "section",
                     "text": {"type": "mrkdwn", "text": f"*その他：* \n\t{users_text}"}
                 })
-                blocks.append({"type": "divider"})
-            
-            # 該当者がいない場合 
-            if not status_map:
+            else:
                 blocks.append({
                     "type": "section",
-                    "text": {"type": "mrkdwn", "text": "_勤怠連絡はありません_"}
+                    "text": {"type": "mrkdwn", "text": "*その他：* \n\tなし"}
                 })
+            blocks.append({"type": "divider"})
 
             # 8. メッセージ送信 
             try:
