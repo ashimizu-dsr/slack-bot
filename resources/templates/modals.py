@@ -222,30 +222,24 @@ def build_delete_confirm_modal(date: str) -> Dict[str, Any]:
 
 
 # ==========================================
-# 4. レポート設定モーダル v2.22（一覧表示 + views.push版）
+# 4. レポート設定モーダル v2.3（グループごとadmin_ids管理）
 # ==========================================
 def build_admin_settings_modal(
-    admin_ids: List[str] = None, 
     groups: List[Dict[str, Any]] = None, 
     user_name_map: Dict[str, str] = None
 ) -> Dict[str, Any]:
     """
-    レポート設定モーダル（一覧表示）を生成します（v2.22）。
+    レポート設定モーダル（一覧表示）を生成します（v2.3）。
     
-    このモーダルはグループを一覧形式で表示し、オーバーフローメニュー（...）から
-    個別に編集・削除できる機能を提供します。
+    各グループに通知先（admin_ids）を個別に設定できる形式です。
     
     Args:
-        admin_ids: 管理者のユーザーID配列
-        groups: グループ情報の配列
+        groups: グループ情報の配列（admin_idsフィールドを含む）
         user_name_map: ユーザーIDから表示名へのマッピング辞書
         
     Returns:
         Slack モーダルビューの辞書
     """
-    if admin_ids is None:
-        admin_ids = []
-    
     if groups is None:
         groups = []
     
@@ -255,43 +249,22 @@ def build_admin_settings_modal(
     # ブロックの構築
     blocks = []
     
-    # 1. 通知先（管理者）
-    admin_element = {
-        "type": "multi_users_select",
-        "action_id": "admin_select",
-        "placeholder": {"type": "plain_text", "text": "ユーザを選択"}
-    }
-    
-    if admin_ids:
-        # 無効なIDが混じっているとエラーになるためクレンジング
-        valid_admin_ids = [uid for uid in admin_ids if uid and isinstance(uid, str)]
-        if valid_admin_ids:
-            admin_element["initial_users"] = valid_admin_ids
-    
-    blocks.append({
-        "type": "input",
-        "block_id": "admin_block",
-        "element": admin_element,
-        "label": {"type": "plain_text", "text": "レポート通知先"}
-    })
-    
-    # 2. 説明文
-    blocks.append({
-        "type": "context",
-        "elements": [{
-            "type": "mrkdwn",
-            "text": "ⓘ ここに登録されたユーザには9:00に勤怠情報が通知されます。"
-        }]
-    })
-    
-    blocks.append({"type": "divider"})
-    
-    # 3. グループ一覧
+    # 1. グループ一覧
     if groups:
         for group in groups:
-            # メンション <@uid> をやめて表示名にする
+            # 通知先の名前を整形
+            admin_ids = group.get("admin_ids", [])
+            admin_names = []
+            for uid in admin_ids:
+                name = user_name_map.get(uid, f"<@{uid}>")
+                admin_names.append(name)
+            
+            admins_text = ", ".join(admin_names) if admin_names else "（通知先未設定）"
+            
+            # メンバーの名前を整形
+            member_ids = group.get("member_ids", [])
             member_names = []
-            for uid in group.get("member_ids", []):
+            for uid in member_ids:
                 name = user_name_map.get(uid, f"<@{uid}>")
                 member_names.append(name)
             
@@ -301,7 +274,7 @@ def build_admin_settings_modal(
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*{group['name']}*\n{members_text}"
+                    "text": f"*{group['name']}* (通知先:{admins_text})\n{members_text}"
                 },
                 "accessory": {
                     "type": "overflow",
@@ -327,10 +300,10 @@ def build_admin_settings_modal(
         })
         blocks.append({"type": "divider"})
     
-    # 4. 追加ボタン
+    # 2. 追加ボタン
     blocks.append({
         "type": "section",
-        "text": {"type": "mrkdwn", "text": "*+ 新しいグループを追加*"},
+        "text": {"type": "mrkdwn", "text": "*➕ 新しいグループを追加*"},
         "accessory": {
             "type": "button",
             "text": {"type": "plain_text", "text": "追加", "emoji": True},
@@ -351,7 +324,9 @@ def build_admin_settings_modal(
 
 def build_add_group_modal() -> Dict[str, Any]:
     """
-    グループ追加モーダルを生成します（v2.22）。
+    グループ追加モーダルを生成します（v2.3）。
+    
+    通知先（admin_ids）を含む形式に対応。
     
     Returns:
         Slack モーダルビューの辞書
@@ -359,17 +334,35 @@ def build_add_group_modal() -> Dict[str, Any]:
     return {
         "type": "modal",
         "callback_id": "add_group_modal",
-        "title": {"type": "plain_text", "text": "グループの追加"},
+        "title": {"type": "plain_text", "text": "グループ編集"},
         "submit": {"type": "plain_text", "text": "保存"},
         "close": {"type": "plain_text", "text": "戻る"},
         "blocks": [
+            {
+                "type": "input",
+                "block_id": "admin_block",
+                "element": {
+                    "type": "multi_users_select",
+                    "action_id": "admin_select",
+                    "placeholder": {"type": "plain_text", "text": "例：課長"}
+                },
+                "label": {"type": "plain_text", "text": "通知先"}
+            },
+            {
+                "type": "context",
+                "elements": [{
+                    "type": "mrkdwn",
+                    "text": "ⓘここに登録されたユーザには9:00に勤怠情報が通知されます。"
+                }]
+            },
+            {"type": "divider"},
             {
                 "type": "input",
                 "block_id": "name_block",
                 "element": {
                     "type": "plain_text_input",
                     "action_id": "name_input",
-                    "placeholder": {"type": "plain_text", "text": "グループ名称を入力"}
+                    "placeholder": {"type": "plain_text", "text": "例：4/5課"}
                 },
                 "label": {"type": "plain_text", "text": "グループ名称"}
             },
@@ -379,9 +372,9 @@ def build_add_group_modal() -> Dict[str, Any]:
                 "element": {
                     "type": "multi_users_select",
                     "action_id": "members_select",
-                    "placeholder": {"type": "plain_text", "text": "メンバーを選択"}
+                    "placeholder": {"type": "plain_text", "text": "例：4/5課所属者"}
                 },
-                "label": {"type": "plain_text", "text": "所属メンバー"},
+                "label": {"type": "plain_text", "text": "所属者"},
                 "optional": True
             }
         ]
@@ -391,33 +384,60 @@ def build_add_group_modal() -> Dict[str, Any]:
 def build_edit_group_modal(
     group_id: str, 
     group_name: str, 
-    member_ids: List[str]
+    member_ids: List[str],
+    admin_ids: List[str] = None
 ) -> Dict[str, Any]:
     """
-    グループ編集モーダルを生成します（v2.22）。
+    グループ編集モーダルを生成します（v2.3）。
+    
+    通知先（admin_ids）を含む形式に対応。
     
     Args:
         group_id: グループID（UUID）
         group_name: グループ名
         member_ids: メンバーのUser ID配列
+        admin_ids: 管理者（通知先）のUser ID配列
         
     Returns:
         Slack モーダルビューの辞書
     """
+    if admin_ids is None:
+        admin_ids = []
+    
     return {
         "type": "modal",
         "callback_id": "edit_group_modal",
-        "title": {"type": "plain_text", "text": "グループの編集"},
-        "submit": {"type": "plain_text", "text": "更新"},
+        "title": {"type": "plain_text", "text": "グループ編集"},
+        "submit": {"type": "plain_text", "text": "保存"},
         "close": {"type": "plain_text", "text": "戻る"},
         "blocks": [
+            {
+                "type": "input",
+                "block_id": "admin_block",
+                "element": {
+                    "type": "multi_users_select",
+                    "action_id": "admin_select",
+                    **({"initial_users": admin_ids} if admin_ids else {}),
+                    "placeholder": {"type": "plain_text", "text": "例：課長"}
+                },
+                "label": {"type": "plain_text", "text": "通知先"}
+            },
+            {
+                "type": "context",
+                "elements": [{
+                    "type": "mrkdwn",
+                    "text": "ⓘここに登録されたユーザには9:00に勤怠情報が通知されます。"
+                }]
+            },
+            {"type": "divider"},
             {
                 "type": "input",
                 "block_id": "name_block",
                 "element": {
                     "type": "plain_text_input",
                     "action_id": "name_input",
-                    "initial_value": group_name
+                    "initial_value": group_name,
+                    "placeholder": {"type": "plain_text", "text": "例：4/5課"}
                 },
                 "label": {"type": "plain_text", "text": "グループ名称"}
             },
@@ -428,9 +448,9 @@ def build_edit_group_modal(
                     "type": "multi_users_select",
                     "action_id": "members_select",
                     **({"initial_users": member_ids} if member_ids else {}),
-                    "placeholder": {"type": "plain_text", "text": "メンバーを選択"}
+                    "placeholder": {"type": "plain_text", "text": "例：4/5課所属者"}
                 },
-                "label": {"type": "plain_text", "text": "所属メンバー"},
+                "label": {"type": "plain_text", "text": "所属者"},
                 "optional": True
             }
         ],
@@ -524,12 +544,12 @@ def create_attendance_delete_confirm_modal(date: str) -> Dict[str, Any]:
 
 
 def create_admin_settings_modal(
-    admin_ids: List[str] = None, 
     groups: List[Dict[str, Any]] = None, 
-    user_name_map: Dict[str, str] = None
+    user_name_map: Dict[str, str] = None,
+    admin_ids: List[str] = None  # 後方互換性のため残すが無視
 ) -> Dict[str, Any]:
-    """旧関数名との互換性のため"""
-    return build_admin_settings_modal(admin_ids, groups, user_name_map)
+    """旧関数名との互換性のため（v2.3では admin_ids は無視）"""
+    return build_admin_settings_modal(groups, user_name_map)
 
 
 def create_add_group_modal() -> Dict[str, Any]:
@@ -540,10 +560,11 @@ def create_add_group_modal() -> Dict[str, Any]:
 def create_edit_group_modal(
     group_id: str, 
     group_name: str, 
-    member_ids: List[str]
+    member_ids: List[str],
+    admin_ids: List[str] = None
 ) -> Dict[str, Any]:
     """旧関数名との互換性のため"""
-    return build_edit_group_modal(group_id, group_name, member_ids)
+    return build_edit_group_modal(group_id, group_name, member_ids, admin_ids)
 
 
 def create_member_delete_confirm_modal(
