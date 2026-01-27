@@ -133,15 +133,18 @@ class NotificationService:
     # ==========================================
     def send_daily_report(self, date_str: str, workspace_id: str = None) -> None: 
         """
-        日次レポートを管理者に送信します（v2.0版、マルチテナント対応）。
+        日次レポートを管理者に送信します（v2.3版、グループごと送信）。
+        
+        各グループごとに、そのグループのadmin_idsにメンションをつけて
+        グループメンバーの勤怠のみを含むレポートを送信します。
         
         Args:
             date_str: 対象日（YYYY-MM-DD形式）
             workspace_id: Slackワークスペースの一意ID（必須）
             
         Note:
-            v2.0では、グループ構造と管理者設定を使用してレポートを生成・送信します。
-            マルチテナント対応により、環境変数ではなくFirestoreから設定を取得します。
+            v2.3では、グループごとに個別のレポートメッセージを送信します。
+            各メッセージの冒頭にはそのグループのadmin_ids全員分をメンションで付けます。
         """
         if not self.attendance_service:
             logger.error("attendance_service が未設定のためレポート送信不可。")
@@ -153,19 +156,7 @@ class NotificationService:
 
         start_time = time.time()
         
-        # 1. 管理者と送信先チャンネルの取得
-        from resources.services.workspace_service import WorkspaceService
-        workspace_service = WorkspaceService()
-        admin_ids = workspace_service.get_admin_ids(workspace_id)
-
-        mention_text = " ".join([f"<@{uid}>" for uid in admin_ids]) if admin_ids else ""
-        
-        if not admin_ids:
-            logger.warning(f"管理者が設定されていません: Workspace={workspace_id}")
-            return
-        
-        # 2. 送信先チャンネルの決定
-        # マルチテナント対応: workspaces コレクションから report_channel_id を取得
+        # 1. 送信先チャンネルの決定
         from resources.shared.db import get_workspace_config
         workspace_config = get_workspace_config(workspace_id)
         
@@ -180,9 +171,10 @@ class NotificationService:
             target_channels = self.slack_wrapper.fetch_bot_joined_channels()
         
         if not target_channels:
-            logger.warning("送信先チャンネルが見つからないため、管理者DMへ送信します。")
+            logger.warning("送信先チャンネルが見つかりません。")
+            return
         
-        # 3. 日付タイトルの準備
+        # 2. 日付タイトルの準備
         try:
             dt = datetime.date.fromisoformat(date_str)
         except:
@@ -190,9 +182,10 @@ class NotificationService:
             logger.warning(f"日付のパースに失敗したため今日の日付を使用: {dt}")
             
         weekday_list = ["月", "火", "水", "木", "金", "土", "日"]
-        title_date = f"{dt.strftime('%m/%d')}({weekday_list[dt.weekday()]})"
+        month_day = dt.strftime('%m/%d')
+        weekday = weekday_list[dt.weekday()]
         
-        # 4. グループ情報を取得
+        # 3. グループ情報を取得
         from resources.services.group_service import GroupService
         group_service = GroupService()
         all_groups = group_service.get_all_groups(workspace_id)
@@ -201,142 +194,195 @@ class NotificationService:
             logger.warning(f"グループが設定されていません: Workspace={workspace_id}")
             return
 
-        # 5. 全グループに所属する全メンバーのIDを抽出
+        # 4. その日の全勤怠記録を一括取得（効率化）
+        from resources.shared.db import get_today_records
+        all_today_records = get_today_records(workspace_id, date_str)
+        attendance_lookup = {r['user_id']: r for r in all_today_records}
+
+        # 5. 全グループに所属する全メンバーのIDを抽出（名前解決用）
         all_member_ids = set()
         for g in all_groups:
             all_member_ids.update(g.get("member_ids", []))
+            all_member_ids.update(g.get("admin_ids", []))
         
         # 6. IDから名前への変換マップを作成
         user_name_map = self.slack_wrapper.fetch_user_name_map(list(all_member_ids))
 
-        # 7. レポートブロックの構築
-        blocks = []
-        if mention_text:
-            blocks.append({
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": mention_text}
-            })
-        
-        blocks.append({
-            "type": "header", 
-            "text": {"type": "plain_text", "text": f"{title_date}の勤怠一覧"}
-        })
-
+        # 7. グループごとにレポートを生成・送信
+        logger.info("===== レポート送信処理開始（v2.3形式） =====")
         for group in all_groups:
             group_name = group.get("name", "不明なグループ")
             member_ids = group.get("member_ids", [])
+            admin_ids = group.get("admin_ids", [])
             
-            blocks.append({"type": "divider"})
-            blocks.append({
-                "type": "section", 
-                "text": {"type": "mrkdwn", "text": f"*{group_name}*"}
-            })
+            # 管理者メンション（<@UID>形式でメンションが効くようにする）
+            mention_text = " ".join([f"<@{uid}>" for uid in admin_ids]) if admin_ids else ""
+            logger.info(f"グループ '{group_name}' のレポート生成: admin_ids={admin_ids}, mention_text={mention_text}")
             
-            if not member_ids:
+            # レポートブロックの構築
+            blocks = []
+            
+            # 管理者メンション（plain_text形式、<@UID>はSlackが自動でメンションに変換）
+            if mention_text:
                 blocks.append({
                     "type": "section",
-                    "text": {"type": "mrkdwn", "text": "_メンバーが登録されていません_"}
+                    "text": {"type": "plain_text", "text": mention_text, "emoji": True}
                 })
-                continue
-
-            # 区分ごとにデータを集計
+            
+            # タイトル（グループ名を含む）
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*{month_day}({weekday})の勤怠（{group_name}）*"}
+            })
+            blocks.append({"type": "divider"})
+            
+            # ステータスごとにグルーピング
             status_map = {}
             for user_id in member_ids:
-                record = self.attendance_service.get_specific_date_record(
-                    workspace_id, user_id, date_str
-                )
-                if record:
+                if user_id in attendance_lookup:
+                    record = attendance_lookup[user_id]
                     st = record.get('status', 'other')
                     display_name = user_name_map.get(user_id, user_id)
-                    note = f" ({record['note']})" if record.get('note') else ""
+                    note = record.get('note', '')
                     
                     if st not in status_map:
                         status_map[st] = []
-                    status_map[st].append(f"{display_name}{note}")
-
+                    
+                    # 備考がある場合はカッコ内に追加
+                    if note:
+                        status_map[st].append(f"{display_name}（{note}）")
+                    else:
+                        status_map[st].append(display_name)
+            
+            # 各ステータスをmrkdwn形式で表示（改行とタブで整形）
+            from resources.constants import STATUS_TRANSLATION
+            logger.info(f"グループ '{group_name}' のステータスマップ: {status_map}")
+            
+            # 全休
+            if "vacation" in status_map:
+                users_text = " \n\t".join(status_map["vacation"])
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*全休：* \n\t{users_text}"}
+                })
+            
+            # AM休
+            if "vacation_am" in status_map:
+                users_text = " \n\t".join(status_map["vacation_am"])
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*AM休：* \n\t{users_text}"}
+                })
+            
+            # PM休
+            if "vacation_pm" in status_map:
+                users_text = " \n\t".join(status_map["vacation_pm"])
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*PM休：* \n\t{users_text}"}
+                })
+            
+            # 時間休
+            if "vacation_hourly" in status_map:
+                users_text = " \n\t".join(status_map["vacation_hourly"])
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*時間休：* \n\t{users_text}"}
+                })
+            
+            # 休暇系の後に区切り
+            if any(k in status_map for k in ["vacation", "vacation_am", "vacation_pm", "vacation_hourly"]):
+                blocks.append({"type": "divider"})
+            
+            # 電車遅延
+            if "late_delay" in status_map:
+                users_text = " \n\t".join(status_map["late_delay"])
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*電車遅延：* \n\t{users_text}"}
+                })
+            
+            # 遅刻
+            if "late" in status_map:
+                users_text = " \n\t".join(status_map["late"])
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*遅刻：* \n\t{users_text}"}
+                })
+            
+            # 遅刻系の後に区切り
+            if any(k in status_map for k in ["late_delay", "late"]):
+                blocks.append({"type": "divider"})
+            
+            # 在宅
+            if "remote" in status_map:
+                users_text = " \n\t".join(status_map["remote"])
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*在宅：* \n\t{users_text}"}
+                })
+            
+            # 在宅の後に区切り
+            if "remote" in status_map:
+                blocks.append({"type": "divider"})
+            
+            # 外出
+            if "out" in status_map:
+                users_text = " \n\t".join(status_map["out"])
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*外出：* \n\t{users_text}"}
+                })
+            
+            # 外出の後に区切り
+            if "out" in status_map:
+                blocks.append({"type": "divider"})
+            
+            # シフト勤務
+            if "shift" in status_map:
+                users_text = " \n\t".join(status_map["shift"])
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*シフト勤務：* \n\t{users_text}"}
+                })
+                blocks.append({"type": "divider"})
+            
+            # 早退
+            if "early_leave" in status_map:
+                users_text = " \n\t".join(status_map["early_leave"])
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*早退：* \n\t{users_text}"}
+                })
+                blocks.append({"type": "divider"})
+            
+            # その他
+            if "other" in status_map:
+                users_text = " \n\t".join(status_map["other"])
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*その他：* \n\t{users_text}"}
+                })
+                blocks.append({"type": "divider"})
+            
+            # 該当者がいない場合
             if not status_map:
                 blocks.append({
                     "type": "section",
                     "text": {"type": "mrkdwn", "text": "_勤怠連絡はありません_"}
                 })
-            else:
-                from resources.constants import STATUS_ORDER
-                
-                # 大分類ごとにセクションを構築
-                # 1. 休暇
-                vacation_statuses = ["vacation", "vacation_am", "vacation_pm", "vacation_hourly"]
-                vacation_lines = []
-                for st_key in vacation_statuses:
-                    if st_key in status_map:
-                        st_label = STATUS_TRANSLATION.get(st_key, st_key)
-                        names = ", ".join(status_map[st_key])
-                        vacation_lines.append(f"{st_label}：{names}")
-                
-                if vacation_lines:
-                    blocks.append({
-                        "type": "section",
-                        "text": {"type": "mrkdwn", "text": "休暇\n" + "\n".join(vacation_lines)}
-                    })
-                
-                # 2. 遅刻
-                late_statuses = ["late_delay", "late"]
-                late_lines = []
-                for st_key in late_statuses:
-                    if st_key in status_map:
-                        st_label = STATUS_TRANSLATION.get(st_key, st_key)
-                        names = ", ".join(status_map[st_key])
-                        late_lines.append(f"{st_label}：{names}")
-                
-                if late_lines:
-                    blocks.append({
-                        "type": "section",
-                        "text": {"type": "mrkdwn", "text": "遅刻\n" + "\n".join(late_lines)}
-                    })
-                
-                # 3. その他（在宅、外出、シフト勤務）
-                other_statuses = ["remote", "out", "shift"]
-                for st_key in other_statuses:
-                    if st_key in status_map:
-                        st_label = STATUS_TRANSLATION.get(st_key, st_key)
-                        names = ", ".join(status_map[st_key])
-                        blocks.append({
-                            "type": "section",
-                            "text": {"type": "mrkdwn", "text": f"{st_label}：{names}"}
-                        })
-                
-                # 4. 早退・その他（あれば表示）
-                remaining_statuses = ["early_leave", "other"]
-                for st_key in remaining_statuses:
-                    if st_key in status_map:
-                        st_label = STATUS_TRANSLATION.get(st_key, st_key)
-                        names = ", ".join(status_map[st_key])
-                        blocks.append({
-                            "type": "section",
-                            "text": {"type": "mrkdwn", "text": f"{st_label}：{names}"}
-                        })
 
-        # 8. メッセージ送信
-        try:
-            if target_channels:
+            # 8. メッセージ送信
+            try:
                 for channel_id in target_channels:
                     self.slack_wrapper.send_message(
                         channel=channel_id,
                         blocks=blocks,
-                        text=f"{title_date}の勤怠一覧"
+                        text=f"{group_name}の{month_day}({weekday})の勤怠"
                     )
-                    logger.info(f"レポート送信成功: {channel_id}")
-            else:
-                # どこにも参加していない場合は管理者にDM
-                for admin_id in admin_ids:
-                    dm = self.client.conversations_open(users=admin_id)
-                    self.slack_wrapper.send_message(
-                        channel=dm["channel"]["id"],
-                        blocks=blocks,
-                        text=f"{title_date}の勤怠一覧"
-                    )
-
-        except Exception as e:
-            logger.error(f"送信エラー: {e}")
+                    logger.info(f"レポート送信成功: Group={group_name}, Channel={channel_id}")
+            except Exception as e:
+                logger.error(f"グループレポート送信エラー: Group={group_name}, {e}")
         
         total_end = time.time()
         logger.info(f"レポート送信処理完了 所要時間: {total_end - start_time:.4f}秒")
