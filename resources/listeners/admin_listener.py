@@ -54,15 +54,8 @@ class AdminListener(Listener):
             try:
                 dynamic_client = get_slack_client(team_id)
                 group_service = GroupService()
-                workspace_service = WorkspaceService()
                 
-                # データ取得（エラー時は初期値）
-                try:
-                    admin_ids = workspace_service.get_admin_ids(team_id)
-                except Exception as e:
-                    logger.error(f"管理者ID取得失敗: {e}", exc_info=True)
-                    admin_ids = []
-                
+                # グループ取得（エラー時は初期値）
                 try:
                     groups = group_service.get_all_groups(team_id)
                 except Exception as e:
@@ -70,9 +63,10 @@ class AdminListener(Listener):
                     groups = []
 
                 # ユーザー名マップの生成（＠付き問題を解決）
-                all_uids = set(admin_ids or [])
+                all_uids = set()
                 for g in (groups or []):
                     all_uids.update(g.get("member_ids", []))
+                    all_uids.update(g.get("admin_ids", []))
                 
                 user_name_map = {}
                 try:
@@ -96,7 +90,6 @@ class AdminListener(Listener):
 
                 # モーダルを生成（データが空でもOK）
                 view = create_admin_settings_modal(
-                    admin_ids=admin_ids or [], 
                     groups=groups or [], 
                     user_name_map=user_name_map or {}
                 )
@@ -105,34 +98,25 @@ class AdminListener(Listener):
                 ack()
                 
                 logger.info(
-                    f"レポート設定モーダル表示: Workspace={team_id}, Groups={len(groups or [])}, Admins={len(admin_ids or [])}"
+                    f"レポート設定モーダル表示: Workspace={team_id}, Groups={len(groups or [])}"
                 )
             except Exception as e:
                 ack()
                 logger.error(f"レポート設定モーダル表示失敗: {e}", exc_info=True)
 
         # ==========================================
-        # 2. レポート設定モーダル「保存」押下
+        # 2. レポート設定モーダル「保存」押下（v2.3では何もしない）
         # ==========================================
         @app.view("admin_settings_modal")
         def on_admin_settings_submitted(ack, body, view):
-            """レポート設定モーダル（一覧）の「保存」ボタン押下時の処理"""
-            workspace_id = body["team"]["id"]
-            vals = view["state"]["values"]
+            """
+            レポート設定モーダル（一覧）の「保存」ボタン押下時の処理。
             
-            try:
-                workspace_service = WorkspaceService()
-                admin_ids = vals["admin_block"]["admin_select"].get("selected_users", [])
-                
-                # データの保存を「ack」の前に完了させる
-                workspace_service.save_admin_ids(workspace_id, admin_ids)
-
-                # 保存が成功してから ack() を返すと、モーダルが正常に閉じる
-                ack()
-                logger.info(f"通知先保存: Workspace={workspace_id}, Admins={len(admin_ids)}")
-                
-            except Exception as e:
-                logger.error(f"通知先保存失敗: {e}", exc_info=True)
+            v2.3では、admin_idsはグループごとに保存されるため、
+            このモーダルでは何も保存しません。
+            """
+            ack()
+            logger.info("レポート設定モーダル閉じる（v2.3では何も保存しない）")
 
         # ==========================================
         # 3. 「追加」ボタン押下
@@ -164,6 +148,7 @@ class AdminListener(Listener):
                 group_service = GroupService()
                 
                 # 入力値を取得
+                admin_ids = vals["admin_block"]["admin_select"].get("selected_users", [])
                 group_name_raw = vals["name_block"]["name_input"].get("value", "")
                 group_name = group_name_raw.strip() if group_name_raw else ""
                 member_ids = vals["members_block"]["members_select"].get("selected_users", [])
@@ -180,9 +165,10 @@ class AdminListener(Listener):
                     workspace_id=workspace_id,
                     name=group_name,
                     member_ids=member_ids,
+                    admin_ids=admin_ids,
                     created_by=body["user"]["id"]
                 )
-                logger.info(f"グループ作成: {group_name}, Members={len(member_ids)}")
+                logger.info(f"グループ作成: {group_name}, Members={len(member_ids)}, Admins={len(admin_ids)}")
                 
                 ack()
                 
@@ -219,6 +205,7 @@ class AdminListener(Listener):
                     # 編集モーダルを表示
                     try:
                         group = group_service.get_group_by_id(workspace_id, group_id)
+                        logger.info(f"編集用グループ取得: {group_id}, データ: {group}")
                     except Exception as e:
                         logger.error(f"グループ取得失敗: {e}", exc_info=True)
                         group = None
@@ -228,10 +215,14 @@ class AdminListener(Listener):
                         ack()
                         return
                     
+                    admin_ids_for_modal = group.get("admin_ids", [])
+                    logger.info(f"モーダルに渡すadmin_ids: {admin_ids_for_modal}")
+                    
                     view = create_edit_group_modal(
                         group_id=group.get("group_id", group_id),
                         group_name=group.get("name", ""),
-                        member_ids=group.get("member_ids", [])
+                        member_ids=group.get("member_ids", []),
+                        admin_ids=admin_ids_for_modal
                     )
                     
                     client.views_push(trigger_id=body["trigger_id"], view=view)
@@ -265,11 +256,11 @@ class AdminListener(Listener):
                 ack()
 
         # ==========================================
-        # 6. グループ編集モーダル「更新」押下
+        # 6. グループ編集モーダル「保存」押下
         # ==========================================
         @app.view("edit_group_modal")
         def on_edit_group_submitted(ack, body, view, client):
-            """グループ編集モーダルの「更新」ボタン押下時の処理"""
+            """グループ編集モーダルの「保存」ボタン押下時の処理"""
             workspace_id = body["team"]["id"]
             metadata = json.loads(view.get("private_metadata", "{}"))
             vals = view["state"]["values"]
@@ -285,10 +276,15 @@ class AdminListener(Listener):
                     ack()
                     return
                 
-                # 入力値を取得
+                # 入力値を取得 
+                admin_ids = vals["admin_block"]["admin_select"].get("selected_users", [])
                 group_name_raw = vals["name_block"]["name_input"].get("value", "")
                 group_name = group_name_raw.strip() if group_name_raw else ""
                 member_ids = vals["members_block"]["members_select"].get("selected_users", [])
+                
+                # デバッグログ
+                logger.info(f"グループ編集：取得した値 - admin_ids={admin_ids}, name={group_name}, members={member_ids}")
+                logger.info(f"vals構造: {json.dumps(vals, indent=2, ensure_ascii=False)}")
                 
                 # バリデーション
                 if not group_name:
@@ -298,12 +294,14 @@ class AdminListener(Listener):
                     return
                 
                 # グループを更新
-                group_service.update_group_members(
+                group_service.update_group(
                     workspace_id=workspace_id,
                     group_id=group_id,
-                    member_ids=member_ids
+                    name=group_name,
+                    member_ids=member_ids,
+                    admin_ids=admin_ids
                 )
-                logger.info(f"グループ更新: {group_name} ({group_id}), Members={len(member_ids)}")
+                logger.info(f"グループ更新: {group_name} ({group_id}), Members={len(member_ids)}, Admins={len(admin_ids)}")
                 
                 ack()
                 
@@ -381,15 +379,8 @@ class AdminListener(Listener):
         """
         try:
             group_service = GroupService()
-            workspace_service = WorkspaceService()
             
-            # 最新データを取得（エラー時は初期値）
-            try:
-                admin_ids = workspace_service.get_admin_ids(workspace_id)
-            except Exception as e:
-                logger.error(f"管理者ID取得失敗（更新時）: {e}", exc_info=True)
-                admin_ids = []
-            
+            # グループ取得（エラー時は初期値）
             try:
                 groups = group_service.get_all_groups(workspace_id)
             except Exception as e:
@@ -397,9 +388,10 @@ class AdminListener(Listener):
                 groups = []
             
             # 表示名マップを生成（＠付き問題を解決）
-            all_user_ids = set(admin_ids or [])
+            all_user_ids = set()
             for g in (groups or []):
                 all_user_ids.update(g.get("member_ids", []))
+                all_user_ids.update(g.get("admin_ids", []))
                 
             user_name_map = {}
             for uid in all_user_ids:
@@ -422,13 +414,12 @@ class AdminListener(Listener):
 
             # モーダルを再生成（データが空でもOK）
             view = create_admin_settings_modal(
-                admin_ids=admin_ids or [], 
                 groups=groups or [], 
                 user_name_map=user_name_map or {}
             )
             
             # 更新
             client.views_update(view_id=view_id, view=view)
-            logger.info(f"親モーダル更新成功: Groups={len(groups or [])}, Admins={len(admin_ids or [])}")
+            logger.info(f"親モーダル更新成功: Groups={len(groups or [])}")
         except Exception as e:
             logger.error(f"親モーダル更新失敗: {e}", exc_info=True)

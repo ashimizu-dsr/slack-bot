@@ -372,7 +372,7 @@ class NotificationService:
                     "text": {"type": "mrkdwn", "text": "_勤怠連絡はありません_"}
                 })
 
-            # 8. メッセージ送信
+            # 8. メッセージ送信 
             try:
                 for channel_id in target_channels:
                     self.slack_wrapper.send_message(

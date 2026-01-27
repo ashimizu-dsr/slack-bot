@@ -42,6 +42,7 @@ class GroupService:
                     "group_id": "group_a1b2c3d4",
                     "name": "営業1課",
                     "member_ids": ["U001", "U002"],
+                    "admin_ids": ["U100", "U101"],
                     "created_at": "2026-01-21T10:00:00",
                     "updated_at": "2026-01-21T10:00:00"
                 },
@@ -55,6 +56,18 @@ class GroupService:
             groups = []
             for doc in docs:
                 data = doc.to_dict()
+                
+                # 既存グループにadmin_idsが無い場合は空配列で初期化
+                if "admin_ids" not in data:
+                    logger.warning(f"グループ '{data.get('name')}' にadmin_idsフィールドがないため空配列で初期化します")
+                    data["admin_ids"] = []
+                    # Firestoreにも保存
+                    try:
+                        doc.reference.update({"admin_ids": []})
+                        logger.info(f"グループ '{data.get('name')}' にadmin_idsフィールドを追加しました")
+                    except Exception as update_error:
+                        logger.error(f"admin_idsフィールド追加失敗: {update_error}")
+                
                 # created_at, updated_at をISO形式の文字列に変換
                 if "created_at" in data and data["created_at"]:
                     data["created_at"] = data["created_at"].isoformat() if hasattr(data["created_at"], 'isoformat') else str(data["created_at"])
@@ -106,6 +119,7 @@ class GroupService:
         workspace_id: str, 
         name: str, 
         member_ids: List[str] = None, 
+        admin_ids: List[str] = None,
         created_by: str = None
     ) -> str:
         """
@@ -115,6 +129,7 @@ class GroupService:
             workspace_id: Slackワークスペースの一意ID
             name: グループ名
             member_ids: 初期メンバーのユーザーID配列（省略時は空配列）
+            admin_ids: 管理者（通知先）のユーザーID配列（省略時は空配列）
             created_by: 作成者のユーザーID（省略可能）
             
         Returns:
@@ -137,6 +152,7 @@ class GroupService:
                 "group_id": group_id,
                 "name": name.strip(),
                 "member_ids": member_ids or [],
+                "admin_ids": admin_ids or [],
                 "created_at": firestore.SERVER_TIMESTAMP,
                 "updated_at": firestore.SERVER_TIMESTAMP
             }
@@ -145,7 +161,7 @@ class GroupService:
                 data["created_by"] = created_by
             
             group_ref.set(data)
-            logger.info(f"グループ作成成功: {group_id}, Name={name}, Members={len(member_ids or [])}")
+            logger.info(f"グループ作成成功: {group_id}, Name={name}, Members={len(member_ids or [])}, Admins={len(admin_ids or [])}")
             return group_id
         except Exception as e:
             logger.error(f"グループ作成失敗: {e}", exc_info=True)
@@ -183,6 +199,81 @@ class GroupService:
             raise
         except Exception as e:
             logger.error(f"グループメンバー更新失敗: {e}", exc_info=True)
+            raise
+
+    def update_group_admins(self, workspace_id: str, group_id: str, admin_ids: List[str]) -> None:
+        """
+        グループの管理者（通知先）を更新します。
+        
+        Args:
+            workspace_id: Slackワークスペースの一意ID
+            group_id: グループの一意ID
+            admin_ids: 新しい管理者のユーザーID配列
+            
+        Raises:
+            ValidationError: グループが存在しない場合
+        """
+        try:
+            group_ref = self.db.collection(get_collection_name("groups")).document(workspace_id)\
+                                .collection(get_collection_name("groups")).document(group_id)
+            
+            # 存在確認
+            if not group_ref.get().exists:
+                raise ValidationError(
+                    f"グループが存在しません: {group_id}",
+                    "⚠️ 指定されたグループが見つかりません。"
+                )
+            
+            group_ref.update({
+                "admin_ids": admin_ids,
+                "updated_at": firestore.SERVER_TIMESTAMP
+            })
+            logger.info(f"グループ管理者更新成功: {group_id}, Admins={len(admin_ids)}")
+        except ValidationError:
+            raise
+        except Exception as e:
+            logger.error(f"グループ管理者更新失敗: {e}", exc_info=True)
+            raise
+    
+    def update_group(self, workspace_id: str, group_id: str, name: str, member_ids: List[str], admin_ids: List[str]) -> None:
+        """
+        グループの名前、メンバー、管理者を一括更新します。
+        
+        Args:
+            workspace_id: Slackワークスペースの一意ID
+            group_id: グループの一意ID
+            name: 新しいグループ名
+            member_ids: 新しいメンバーのユーザーID配列
+            admin_ids: 新しい管理者のユーザーID配列
+            
+        Raises:
+            ValidationError: グループが存在しない場合、またはグループ名が空の場合
+        """
+        if not name or not name.strip():
+            raise ValidationError("グループ名が空です", "⚠️ グループ名を入力してください。")
+        
+        try:
+            group_ref = self.db.collection(get_collection_name("groups")).document(workspace_id)\
+                                .collection(get_collection_name("groups")).document(group_id)
+            
+            # 存在確認
+            if not group_ref.get().exists:
+                raise ValidationError(
+                    f"グループが存在しません: {group_id}",
+                    "⚠️ 指定されたグループが見つかりません。"
+                )
+            
+            group_ref.update({
+                "name": name.strip(),
+                "member_ids": member_ids,
+                "admin_ids": admin_ids,
+                "updated_at": firestore.SERVER_TIMESTAMP
+            })
+            logger.info(f"グループ更新成功: {group_id}, Name={name}, Members={len(member_ids)}, Admins={len(admin_ids)}, admin_ids={admin_ids}")
+        except ValidationError:
+            raise
+        except Exception as e:
+            logger.error(f"グループ更新失敗: {e}", exc_info=True)
             raise
 
     def update_group_name(self, workspace_id: str, group_id: str, name: str) -> None:
@@ -292,6 +383,7 @@ class GroupService:
         workspace_id: str, 
         name: str, 
         member_ids: List[str] = None, 
+        admin_ids: List[str] = None,
         created_by: str = None
     ) -> str:
         """
@@ -301,6 +393,7 @@ class GroupService:
             workspace_id: Slackワークスペースの一意ID
             name: グループ名（ドキュメントIDとして使用）
             member_ids: 初期メンバーのユーザーID配列
+            admin_ids: 管理者（通知先）のユーザーID配列（省略時は空配列）
             created_by: 作成者のユーザーID（省略可能）
             
         Returns:
@@ -339,6 +432,7 @@ class GroupService:
                 "group_id": sanitized_name,
                 "name": sanitized_name,
                 "member_ids": member_ids or [],
+                "admin_ids": admin_ids or [],
                 "created_at": firestore.SERVER_TIMESTAMP,
                 "updated_at": firestore.SERVER_TIMESTAMP
             }
@@ -347,7 +441,7 @@ class GroupService:
                 data["created_by"] = created_by
             
             group_ref.set(data)
-            logger.info(f"グループ作成成功(v2.2): {sanitized_name}, Members={len(member_ids or [])}")
+            logger.info(f"グループ作成成功(v2.2): {sanitized_name}, Members={len(member_ids or [])}, Admins={len(admin_ids or [])}")
             return sanitized_name
         except ValidationError:
             raise
@@ -359,15 +453,17 @@ class GroupService:
         self, 
         workspace_id: str, 
         group_id: str, 
-        member_ids: List[str]
+        member_ids: List[str],
+        admin_ids: List[str] = None
     ) -> None:
         """
-        グループのメンバーを更新します（v2.2版、group_id = グループ名）。
+        グループのメンバーと管理者を更新します（v2.2版、group_id = グループ名）。
         
         Args:
             workspace_id: Slackワークスペースの一意ID
             group_id: グループ名（ドキュメントID）
             member_ids: 新しいメンバーのユーザーID配列
+            admin_ids: 新しい管理者のユーザーID配列（省略時は更新しない）
             
         Raises:
             ValidationError: グループが存在しない場合
@@ -383,15 +479,20 @@ class GroupService:
                     "⚠️ 指定されたグループが見つかりません。"
                 )
             
-            group_ref.update({
+            update_data = {
                 "member_ids": member_ids,
                 "updated_at": firestore.SERVER_TIMESTAMP
-            })
-            logger.info(f"グループメンバー更新成功(v2.2): {group_id}, Members={len(member_ids)}")
+            }
+            
+            if admin_ids is not None:
+                update_data["admin_ids"] = admin_ids
+            
+            group_ref.update(update_data)
+            logger.info(f"グループ更新成功(v2.2): {group_id}, Members={len(member_ids)}, Admins={len(admin_ids) if admin_ids is not None else 'unchanged'}")
         except ValidationError:
             raise
         except Exception as e:
-            logger.error(f"グループメンバー更新失敗(v2.2): {e}", exc_info=True)
+            logger.error(f"グループ更新失敗(v2.2): {e}", exc_info=True)
             raise
 
     def delete_group_with_name_as_id(self, workspace_id: str, group_id: str) -> None:
