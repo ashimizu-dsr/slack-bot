@@ -425,7 +425,10 @@ class AttendanceListener(Listener):
         try:
             client = get_slack_client(team_id)
             
+            # 削除実行
             self.attendance_service.delete_attendance(team_id, user_id, metadata["date"])
+            
+            # 元のメッセージを更新
             client.chat_update(
                 channel=metadata["channel_id"],
                 ts=metadata["message_ts"],
@@ -438,6 +441,16 @@ class AttendanceListener(Listener):
                 }],
                 text="勤怠を取り消しました"
             )
+            
+            # 削除通知を送信（スレッド返信として）
+            notification_service = NotificationService(client, self.attendance_service)
+            notification_service.notify_attendance_change(
+                record={"user_id": user_id, "date": metadata["date"]},
+                channel=metadata["channel_id"],
+                thread_ts=metadata["message_ts"],
+                is_delete=True
+            )
+            
             logger.info(f"削除成功（非同期）: User={user_id}, Date={metadata['date']}")
         except Exception as e:
             logger.error(f"取消処理失敗: {e}", exc_info=True)
