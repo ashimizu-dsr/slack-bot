@@ -364,6 +364,10 @@ def slack_bot(request):
     #     except Exception as e:
     #         logger.error(f"Failed to generate install URL: {e}", exc_info=True)
     #         return f"Error: {e}", 500
+
+    logger.info(f"--- INCOMING REQUEST --- Path: {request.path}")
+    if request.is_json:
+        logger.info(f"Body: {request.get_json()}")
     
     # 1. OAuth インストールページ
     if path == "/slack/oauth_redirect":
