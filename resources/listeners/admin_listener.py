@@ -627,11 +627,12 @@ class AdminListener(Listener):
                     # ユーザー情報を取得して表示名をマップに格納
                     user_info = client.users_info(user=uid)
                     if user_info["ok"]:
-                        profile = user_info["user"]["profile"]
+                        user = user_info["user"]
+                        profile = user.get("profile", {})
                         name = (
                             profile.get("display_name") or 
-                            profile.get("real_name") or 
-                            uid
+                            user.get("real_name") or 
+                            user.get("name", "")
                         )
                         # 先頭の＠マークを除去
                         if name and name.startswith("@"):
