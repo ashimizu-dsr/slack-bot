@@ -65,36 +65,14 @@ class AdminListener(Listener):
                     logger.error(f"グループ取得失敗: {e}", exc_info=True)
                     groups = []
 
-                # ユーザー名マップの生成（＠付き問題を解決）
-                all_uids = set()
-                for g in (groups or []):
-                    all_uids.update(g.get("member_ids", []))
-                    all_uids.update(g.get("admin_ids", []))
-                
+                # ユーザー名マップは空にして、Slackの<@user_id>形式で表示
+                # これにより重いusers_list()を呼ばず、3秒制限内にモーダルを開ける
                 user_name_map = {}
-                try:
-                    users_data = dynamic_client.users_list()
-                    if users_data["ok"]:
-                        for u in users_data["members"]:
-                            if u["id"] in all_uids:
-                                profile = u.get("profile", {})
-                                # ＠マークを除去して表示名を取得
-                                name = (
-                                    profile.get("display_name") or 
-                                    u.get("real_name") or 
-                                    u.get("name", "")
-                                )
-                                # 先頭の＠マークを除去
-                                if name and name.startswith("@"):
-                                    name = name[1:]
-                                user_name_map[u["id"]] = name
-                except Exception as e:
-                    logger.error(f"ユーザーリスト取得失敗: {e}", exc_info=True)
 
                 # モーダルを生成（データが空でもOK）
                 view = create_admin_settings_modal(
                     groups=groups or [], 
-                    user_name_map=user_name_map or {}
+                    user_name_map=user_name_map
                 )
                 
                 dynamic_client.views_open(trigger_id=body["trigger_id"], view=view)
@@ -615,36 +593,14 @@ class AdminListener(Listener):
                 logger.error(f"グループ取得失敗（更新時）: {e}", exc_info=True)
                 groups = []
             
-            # 表示名マップを生成（＠付き問題を解決）
-            all_user_ids = set()
-            for g in (groups or []):
-                all_user_ids.update(g.get("member_ids", []))
-                all_user_ids.update(g.get("admin_ids", []))
-                
+            # ユーザー名マップは空にして、Slackの<@user_id>形式で表示
+            # これにより重いAPIコールを避け、パフォーマンスを向上
             user_name_map = {}
-            for uid in all_user_ids:
-                try:
-                    # ユーザー情報を取得して表示名をマップに格納
-                    user_info = client.users_info(user=uid)
-                    if user_info["ok"]:
-                        user = user_info["user"]
-                        profile = user.get("profile", {})
-                        name = (
-                            profile.get("display_name") or 
-                            user.get("real_name") or 
-                            user.get("name", "")
-                        )
-                        # 先頭の＠マークを除去
-                        if name and name.startswith("@"):
-                            name = name[1:]
-                        user_name_map[uid] = name
-                except Exception:
-                    user_name_map[uid] = uid
 
             # モーダルを再生成（データが空でもOK）
             view = create_admin_settings_modal(
                 groups=groups or [], 
-                user_name_map=user_name_map or {}
+                user_name_map=user_name_map
             )
             
             # 更新
