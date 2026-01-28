@@ -141,60 +141,98 @@ def extract_attendance_from_text(
     base_date = datetime.date.today() 
     
     try:
-        # システム指示の定義（最新ルール 2026-01-28）
+        # システム指示の定義（最新ルール 2026-01-28: Few-shot最適化版）
         system_instruction = (
-            "You are a professional attendance data extractor. Output JSON only.\n"
-            "Format: { \"is_attendance\": bool, \"attendances\": [{ \"date\": \"YYYY-MM-DD\", \"status\": \"string\", \"note\": \"string\", \"action\": \"save\" | \"delete\" }] }\n\n"
+            "You are an attendance data extractor. Output JSON only.\n"
+            "Format: {\"is_attendance\": bool, \"attendances\": [{\"date\": \"YYYY-MM-DD\", \"status\": \"string\", \"note\": \"string\", \"action\": \"save\"|\"delete\"}]}\n\n"
 
-            "=== CRITICAL RULE: DELETE/CANCEL DETECTION ===\n"
-            "- If the message contains explicit cancellation words like '取消', 'キャンセル', '取り消し', '削除', the action MUST be 'delete'.\n"
-            "- Examples:\n"
-            "  * '明日の早退は取消します' -> action: 'delete', date: tomorrow\n"
-            "  * '1/30の休暇をキャンセル' -> action: 'delete', date: 2026-01-30\n"
-            "  * '取り消します' -> action: 'delete'\n"
-            "- For deletions, status can be 'other' and note should describe what is being cancelled.\n\n"
+            "RULES:\n"
+            "1. CANCELLATION WORDS: If message contains '取消/キャンセル/取り消し/削除' -> action='delete'\n"
+            "2. ARROW (A->B): If B='出社' (plain office) -> action='delete', note='出社 (予定変更)'\n"
+            "3. DATES: Process '明日/明後日' correctly using 'Today' field\n"
+            "4. LOCATION: Only use status='out' for specific places (e.g., '九段下'). Plain '出社'='other'\n\n"
 
-            "=== CRITICAL RULE: ARROW NOTATION (A -> B) ===\n"
-            "- ALWAYS prioritize 'B' (the part AFTER '->') as the truth.\n"
-            "- If 'B' is just '出社' (Office), it means CANCELING previous remote/vacation. \n"
-            "  * REQUIRED: status: 'other', action: 'delete', note: '出社 (予定変更)'.\n"
-            "  * DO NOT label as 'out' unless a specific city/building name is present.\n\n"
-
-            "=== CORE PRINCIPLES ===\n"
-            "1. Deep Scan: Ignore long apologies; extract data from the core message.\n"
-            "2. Same-Day Consolidation: If 'B' contains multiple states (e.g., 在宅 and 午後休), merge into ONE entry with status: 'other'.\n"
-            "3. Location vs Office: Only use status: 'out' if a specific location name like '九段下' exists. Plain '出社' is NOT 'out'.\n"
-            "4. Relative Dates: Process '明日' (tomorrow), '明後日' (day after tomorrow), '来週月曜' (next Monday) correctly based on the 'Today' provided.\n\n"
-
-            "=== STATUS MAPPING ===\n"
-            "1. vacation (all-day), vacation_am (AM), vacation_pm (PM), vacation_hourly (hourly)\n"
-            "2. out: Business visits OR specific office locations (e.g., '九段下').\n"
-            "3. late_delay: Train delays. late: General lateness.\n"
-            "4. remote: Work from home.\n"
-            "5. early_leave: Leaving early.\n"
-            "6. other: Generic office return, consolidated states, deletions, or any other cases.\n\n"
-
-            "=== EXAMPLES (MANDATORY LOGIC) ===\n"
-            "Input: '1/27(火) 出社 -> 在宅(午後休)'\n"
-            "Output: { \"is_attendance\": true, \"attendances\": [{ \"date\": \"2026-01-27\", \"status\": \"other\", \"note\": \"在宅 (午後休)\", \"action\": \"save\" }] }\n\n"
-            "Input: '1/30(金) 在宅 -> 出社'\n"
-            "Output: { \"is_attendance\": true, \"attendances\": [{ \"date\": \"2026-01-30\", \"status\": \"other\", \"note\": \"出社 (予定変更)\", \"action\": \"delete\" }] }\n\n"
-            "Input: '九段下に出社'\n"
-            "Output: { \"is_attendance\": true, \"attendances\": [{ \"date\": \"2026-01-27\", \"status\": \"out\", \"note\": \"九段下に出社\", \"action\": \"save\" }] }\n\n"
-            "Input: '明日の早退は取消します' (Today: 2026-01-28)\n"
-            "Output: { \"is_attendance\": true, \"attendances\": [{ \"date\": \"2026-01-29\", \"status\": \"other\", \"note\": \"早退の取消\", \"action\": \"delete\" }] }"
+            "STATUS:\n"
+            "- vacation/vacation_am/vacation_pm/vacation_hourly: Paid leave\n"
+            "- out: Specific office location or business trip\n"
+            "- late_delay: Train delay | late: General lateness\n"
+            "- remote: Work from home\n"
+            "- early_leave: Leave early\n"
+            "- other: Office return, mixed states, deletions, or unknown\n"
         )
 
         # API呼び出し
-        model_name = "gpt-4o"
+        model_name = "gpt-4o-mini-2024-07-18"  # 最新の安定版を明示的に指定
+        
+        # Few-shot examples（実例を追加して学習効果を高める）
+        few_shot_examples = [
+            # 例1: 在宅勤務
+            {
+                "role": "user",
+                "content": "Today: 2026-01-28 (Tuesday)\nText: 明日は在宅です"
+            },
+            {
+                "role": "assistant",
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-29", "status": "remote", "note": "在宅", "action": "save"}]}'
+            },
+            # 例2: 取消
+            {
+                "role": "user",
+                "content": "Today: 2026-01-28 (Tuesday)\nText: 明日の早退は取消します"
+            },
+            {
+                "role": "assistant",
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-29", "status": "other", "note": "早退の取消", "action": "delete"}]}'
+            },
+            # 例3: 矢印記法（出社への変更）
+            {
+                "role": "user",
+                "content": "Today: 2026-01-27 (Monday)\nText: 1/30(金) 在宅 -> 出社"
+            },
+            {
+                "role": "assistant",
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-30", "status": "other", "note": "出社 (予定変更)", "action": "delete"}]}'
+            },
+            # 例4: 休暇
+            {
+                "role": "user",
+                "content": "Today: 2026-01-28 (Tuesday)\nText: 1/30 午前休"
+            },
+            {
+                "role": "assistant",
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-30", "status": "vacation_am", "note": "午前休", "action": "save"}]}'
+            },
+            # 例5: 遅刻
+            {
+                "role": "user",
+                "content": "Today: 2026-01-28 (Tuesday)\nText: 電車遅延で遅刻します"
+            },
+            {
+                "role": "assistant",
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "late_delay", "note": "電車遅延", "action": "save"}]}'
+            },
+            # 例6: 外出（具体的な場所）
+            {
+                "role": "user",
+                "content": "Today: 2026-01-28 (Tuesday)\nText: 九段下に出社します"
+            },
+            {
+                "role": "assistant",
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "out", "note": "九段下に出社", "action": "save"}]}'
+            }
+        ]
+        
+        messages = [
+            {"role": "system", "content": system_instruction},
+            *few_shot_examples,  # Few-shot examplesを挿入
+            {"role": "user", "content": f"Today: {base_date} ({base_date.strftime('%A')})\nText: {clean_text}"}
+        ]
+        
         response = client.chat.completions.create(
             model=model_name,
-            messages=[
-                {"role": "system", "content": system_instruction},
-                {"role": "user", "content": f"Today: {base_date} ({base_date.strftime('%A')})\nText: {clean_text}"}
-            ],
+            messages=messages,
             response_format={"type": "json_object"},
-            temperature=0.1
+            temperature=0.0  # 0.1 -> 0.0 に変更（より一貫性のある出力）
         )
 
         # OpenAI APIコストのログ出力
