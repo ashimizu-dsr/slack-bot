@@ -390,8 +390,17 @@ class AttendanceListener(Listener):
                             thread_ts=ts,
                             is_delete=True
                         )
-                    except Exception:
-                        logger.info(f"Delete failed/skipped: {date}")
+                    except Exception as e:
+                        logger.info(f"Delete failed/skipped: {date}, Error: {e}")
+                        # 削除対象が見つからない場合もユーザーに通知
+                        try:
+                            client.chat_postMessage(
+                                channel=channel,
+                                thread_ts=ts,
+                                text=f"⚠️ {date} の勤怠記録が見つかりませんでした。すでに取り消されているか、記録されていない可能性があります。"
+                            )
+                        except Exception:
+                            pass
                     continue
 
                 # B. 保存・更新アクション
