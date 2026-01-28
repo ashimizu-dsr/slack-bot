@@ -57,6 +57,8 @@ class SystemListener(Listener):
            
             過去7日間のメッセージを取得して解析します。
             """
+            # 1. 関数に入ったことを即座にログ出し
+            logger.info(f"!!! EVENT RECEIVED: member_joined_channel !!!")
             ack()
             
             try:
@@ -64,6 +66,8 @@ class SystemListener(Listener):
                 team_id = body.get("team_id") or event.get("team")
                 channel_id = event.get("channel")
                 joined_user_id = event.get("user")
+
+                print(f"!!! DEBUG ID: Team={team_id}, Channel={channel_id}, User={joined_user_id}", flush=True)
                
                 logger.info(
                     f"[Bot参加イベント] 検知: Team={team_id}, "
