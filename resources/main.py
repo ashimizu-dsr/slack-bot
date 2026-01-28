@@ -307,7 +307,12 @@ def get_team_id_from_request(request) -> Optional[str]:
 # エントリポイント
 # ==========================================
 
-def slack_bot(request):   
+def slack_bot(request): 
+
+     # 届いたリクエストのヘッダーをすべて出す
+    print(f"!!! HEADERS: {dict(request.headers)}", flush=True) 
+
+    
     path = request.path
     logger.info(f"Request received: path={path}, method={request.method}")
     
