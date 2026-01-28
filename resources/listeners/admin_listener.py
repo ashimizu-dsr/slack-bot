@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import datetime
+from typing import List, Dict, Any
 
 from resources.listeners.Listener import Listener
 from resources.services.group_service import GroupService
