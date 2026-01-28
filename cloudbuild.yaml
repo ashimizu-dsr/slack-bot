@@ -4,13 +4,13 @@ steps:
     args: [
       'build', 
       #'--no-cache', # ★ここに追加：キャッシュを一切使わずビルド
-      '-t', 'gcr.io/$PROJECT_ID/slack-kintai-bot:$COMMIT_SHA', 
+      '-t', 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA', 
       '.'
     ]
 
   # 2. ビルドしたイメージを保存する
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/slack-kintai-bot:$COMMIT_SHA']
+    args: ['push', 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA']
 
   # 3. Cloud Run にデプロイする
 # 3. Cloud Run にデプロイする
