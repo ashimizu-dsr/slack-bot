@@ -44,6 +44,8 @@ class SystemListener(Listener):
         Args:
             app: Slack Bolt Appインスタンス
         """
+        
+        logger.info("SystemListener.handle_sync: イベントハンドラーを登録中...")
        
         # ==========================================
         # 1. Botがチャンネルに参加したとき
@@ -97,6 +99,8 @@ class SystemListener(Listener):
                     )
             except Exception as e:
                 logger.error(f"[Bot参加イベント] エラー: {e}", exc_info=True)
+        
+        logger.info("SystemListener.handle_sync: member_joined_channel ハンドラー登録完了")
 
     # ======================================================================
     # 非同期処理: Pub/Subから戻ってきた後の重い処理

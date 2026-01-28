@@ -288,7 +288,33 @@ def get_team_id_from_request(request) -> Optional[str]:
 
 def slack_bot(request):   
     path = request.path
-    # logger.info(f"Request received: path={path}, method={request.method}")
+    logger.info(f"Request received: path={path}, method={request.method}")
+    
+    # イベントの詳細をログ出力（デバッグ用）
+    if request.is_json:
+        try:
+            body = request.get_json(silent=True)
+            if body:
+                event_type = body.get("type")
+                event_data = body.get("event", {})
+                event_subtype = event_data.get("type") if isinstance(event_data, dict) else None
+                
+                logger.info(
+                    f"Slack Event: type={event_type}, "
+                    f"event.type={event_subtype}, "
+                    f"team_id={body.get('team_id')}"
+                )
+                
+                # member_joined_channelイベントの詳細ログ
+                if event_subtype == "member_joined_channel":
+                    logger.info(
+                        f"[member_joined_channel] Detected: "
+                        f"channel={event_data.get('channel')}, "
+                        f"user={event_data.get('user')}, "
+                        f"team={event_data.get('team')}"
+                    )
+        except Exception as e:
+            logger.debug(f"Could not parse request body for logging: {e}")
     
     # # 1. OAuth インストールページ
     # if path == "/slack/install":
