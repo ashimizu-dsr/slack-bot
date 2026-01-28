@@ -6,14 +6,16 @@
     },
     "features": {
         "bot_user": {
-            "display_name": "勤怠",
+            "display_name": "kintai",
             "always_online": true
         },
         "slash_commands": [
             {
                 "command": "/report",
+                "url": "https://slack-kintai-bot-dev-478434513686.asia-northeast1.run.app/slack/events",
                 "description": "デバッグ用: 指定日の勤怠レポートを生成（DM限定）",
-                "usage_hint": "YYYYMMDD (例: 20260127)"
+                "usage_hint": "YYYYMMDD (例: 20260127)",
+                "should_escape": false
             }
         ],
         "shortcuts": [
@@ -33,7 +35,7 @@
     },
     "oauth_config": {
         "redirect_urls": [
-            "https://slack-kintai-bot-478434513686.asia-northeast1.run.app/slack/oauth_redirect"
+            "https://slack-kintai-bot-dev-478434513686.asia-northeast1.run.app/slack/oauth_redirect"
         ],
         "scopes": {
             "bot": [
@@ -56,7 +58,7 @@
     },
     "settings": {
         "event_subscriptions": {
-            "request_url": "https://slack-kintai-bot-478434513686.asia-northeast1.run.app/slack/events",
+            "request_url": "https://slack-kintai-bot-dev-478434513686.asia-northeast1.run.app/slack/events",
             "bot_events": [
                 "member_joined_channel",
                 "message.channels",
@@ -65,7 +67,7 @@
         },
         "interactivity": {
             "is_enabled": true,
-            "request_url": "https://slack-kintai-bot-478434513686.asia-northeast1.run.app/slack/events"
+            "request_url": "https://slack-kintai-bot-dev-478434513686.asia-northeast1.run.app/slack/events"
         },
         "org_deploy_enabled": false,
         "socket_mode_enabled": false,
