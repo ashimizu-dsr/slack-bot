@@ -65,22 +65,26 @@ class AdminListener(Listener):
                     logger.error(f"グループ取得失敗: {e}", exc_info=True)
                     groups = []
 
-                # ユーザー名マップは空にして、Slackの<@user_id>形式で表示
-                # これにより重いusers_list()を呼ばず、3秒制限内にモーダルを開ける
-                user_name_map = {}
-
-                # モーダルを生成（データが空でもOK）
+                # 1. まず空のuser_name_mapでモーダルを高速に開く
                 view = create_admin_settings_modal(
                     groups=groups or [], 
-                    user_name_map=user_name_map
+                    user_name_map={}
                 )
                 
-                dynamic_client.views_open(trigger_id=body["trigger_id"], view=view)
+                response = dynamic_client.views_open(trigger_id=body["trigger_id"], view=view)
                 ack()
                 
                 logger.info(
                     f"レポート設定モーダル表示: Workspace={team_id}, Groups={len(groups or [])}"
                 )
+                
+                # 2. モーダルを開いた後、バックグラウンドでユーザー名を取得して更新
+                if response["ok"] and groups:
+                    view_id = response["view"]["id"]
+                    self._async_update_modal_with_usernames(
+                        dynamic_client, view_id, team_id, groups
+                    )
+                    
             except Exception as e:
                 ack()
                 logger.error(f"レポート設定モーダル表示失敗: {e}", exc_info=True)
@@ -593,9 +597,8 @@ class AdminListener(Listener):
                 logger.error(f"グループ取得失敗（更新時）: {e}", exc_info=True)
                 groups = []
             
-            # ユーザー名マップは空にして、Slackの<@user_id>形式で表示
-            # これにより重いAPIコールを避け、パフォーマンスを向上
-            user_name_map = {}
+            # キャンセルで戻る時は、時間的余裕があるのでユーザー名を取得
+            user_name_map = self._fetch_user_names(client, groups)
 
             # モーダルを再生成（データが空でもOK）
             view = create_admin_settings_modal(
@@ -608,3 +611,90 @@ class AdminListener(Listener):
             logger.info(f"親モーダル更新成功: Groups={len(groups or [])}")
         except Exception as e:
             logger.error(f"親モーダル更新失敗: {e}", exc_info=True)
+    
+    def _async_update_modal_with_usernames(self, client, view_id: str, workspace_id: str, groups: List[Dict]):
+        """
+        モーダルを開いた後、バックグラウンドでユーザー名を取得してモーダルを更新します。
+        
+        Args:
+            client: Slack client
+            view_id: 更新対象のview_id
+            workspace_id: ワークスペースID
+            groups: グループ情報のリスト
+        """
+        try:
+            # ユーザー名を取得
+            user_name_map = self._fetch_user_names(client, groups)
+            
+            if not user_name_map:
+                logger.info("ユーザー名の取得に失敗したため、モーダルの更新をスキップ")
+                return
+            
+            # モーダルを更新
+            view = create_admin_settings_modal(
+                groups=groups, 
+                user_name_map=user_name_map
+            )
+            
+            client.views_update(view_id=view_id, view=view)
+            logger.info(f"モーダルをユーザー名付きで更新完了: {len(user_name_map)}名")
+            
+        except Exception as e:
+            logger.error(f"モーダルの非同期更新失敗: {e}", exc_info=True)
+    
+    def _fetch_user_names(self, client, groups: List[Dict]) -> Dict[str, str]:
+        """
+        グループ内のユーザー名を取得します（＠なしのプレーンテキスト）。
+        
+        Args:
+            client: Slack client
+            groups: グループ情報のリスト
+            
+        Returns:
+            user_id -> 表示名 のマッピング辞書
+        """
+        user_name_map = {}
+        
+        try:
+            # 必要なユーザーIDを収集
+            all_user_ids = set()
+            for g in (groups or []):
+                all_user_ids.update(g.get("member_ids", []))
+                all_user_ids.update(g.get("admin_ids", []))
+            
+            if not all_user_ids:
+                return user_name_map
+            
+            # users_listで全ユーザー取得（ページネーション対応）
+            cursor = None
+            while True:
+                response = client.users_list(cursor=cursor, limit=200)
+                
+                if response["ok"]:
+                    for user in response["members"]:
+                        if user["id"] in all_user_ids:
+                            profile = user.get("profile", {})
+                            name = (
+                                profile.get("display_name") or 
+                                user.get("real_name") or 
+                                user.get("name", "")
+                            )
+                            # ＠マークを除去
+                            if name and name.startswith("@"):
+                                name = name[1:]
+                            user_name_map[user["id"]] = name
+                    
+                    # 次のページがあるか確認
+                    cursor = response.get("response_metadata", {}).get("next_cursor")
+                    if not cursor:
+                        break
+                else:
+                    logger.error(f"users_list APIエラー: {response.get('error')}")
+                    break
+            
+            logger.info(f"ユーザー名取得完了: {len(user_name_map)}名")
+            
+        except Exception as e:
+            logger.error(f"ユーザー名取得失敗: {e}", exc_info=True)
+        
+        return user_name_map
