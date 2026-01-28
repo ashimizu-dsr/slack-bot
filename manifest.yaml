@@ -13,7 +13,7 @@
             {
                 "command": "/report",
                 "url": "https://slack-kintai-bot-dev-478434513686.asia-northeast1.run.app/slack/events",
-                "description": "デバッグ用: 指定日の勤怠レポートを生成（DM限定）",
+                "description": "指定日の勤怠レポート生成（DM限定）",
                 "usage_hint": "YYYYMMDD (例: 20260127)",
                 "should_escape": false
             }
@@ -57,6 +57,13 @@
         }
     },
     "settings": {
+        "org_deploy_enabled": false,
+        "socket_mode_enabled": false,
+        "token_rotation_enabled": false,
+        "app_home": {
+            "messages_tab_enabled": true,
+            "messages_tab_read_only_enabled": false
+        },
         "event_subscriptions": {
             "request_url": "https://slack-kintai-bot-dev-478434513686.asia-northeast1.run.app/slack/events",
             "bot_events": [

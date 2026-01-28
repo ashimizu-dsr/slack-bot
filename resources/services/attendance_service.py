@@ -412,11 +412,20 @@ class AttendanceService:
         try:
             from resources.services.nlp_service import extract_attendance_from_text
             
+            logger.info(f"[過去ログ] AI解析開始: User={user_id}, Text='{text[:30]}...'")
+            
             # AI解析実行
             extraction = extract_attendance_from_text(text, team_id=workspace_id, user_id=user_id)
             
             if not extraction:
+                logger.info(f"[過去ログ] AI解析結果: 勤怠情報なし (User={user_id})")
                 return False
+            
+            logger.info(
+                f"[過去ログ] AI解析成功: User={user_id}, "
+                f"Date={extraction.get('date')}, Status={extraction.get('status')}, "
+                f"Action={extraction.get('action')}"
+            )
             
             # 抽出結果を処理
             processed_records = self.process_ai_extraction_result(
@@ -428,8 +437,16 @@ class AttendanceService:
                 ts=ts
             )
             
+            if processed_records:
+                for record in processed_records:
+                    logger.info(
+                        f"[過去ログ] DB保存完了: User={user_id}, "
+                        f"Date={record.date}, Status={record.status}, "
+                        f"Action={record.action_taken}"
+                    )
+            
             return len(processed_records) > 0
             
         except Exception as e:
-            logger.error(f"過去メッセージ処理エラー: {e}", exc_info=True)
+            logger.error(f"[過去ログ] 処理エラー: User={user_id}, Error={e}", exc_info=True)
             return False

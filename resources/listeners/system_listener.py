@@ -60,15 +60,27 @@ class SystemListener(Listener):
             try:
                 # マルチテナント対応: team_id を取得
                 team_id = body.get("team_id") or event.get("team")
+                channel_id = event.get("channel")
+                joined_user_id = event.get("user")
+               
+                logger.info(
+                    f"[Bot参加イベント] 検知: Team={team_id}, "
+                    f"Channel={channel_id}, User={joined_user_id}"
+                )
                
                 # team_id に基づいて WebClient を取得
                 dynamic_client = get_slack_client(team_id)
                
                 bot_user_id = dynamic_client.auth_test()["user_id"]
                 
+                logger.info(f"[Bot参加イベント] Bot User ID={bot_user_id}")
+                
                 # Bot自身の参加のみ処理
-                if event.get("user") == bot_user_id:
-                    logger.info(f"Bot参加検知: Channel={event.get('channel')}, Workspace={team_id}")
+                if joined_user_id == bot_user_id:
+                    logger.info(
+                        f"[Bot参加イベント] ✓ Bot自身の参加を確認: "
+                        f"Channel={channel_id}, Workspace={team_id}"
+                    )
                     
                     # Pub/Subに投げる（非同期処理へ）
                     self.publish_to_worker(
@@ -78,8 +90,13 @@ class SystemListener(Listener):
                             "event": event
                         }
                     )
+                else:
+                    logger.info(
+                        f"[Bot参加イベント] - スキップ（他ユーザーの参加）: "
+                        f"User={joined_user_id}"
+                    )
             except Exception as e:
-                logger.error(f"Bot参加処理エラー: {e}", exc_info=True)
+                logger.error(f"[Bot参加イベント] エラー: {e}", exc_info=True)
 
     # ======================================================================
     # 非同期処理: Pub/Subから戻ってきた後の重い処理
@@ -115,9 +132,11 @@ class SystemListener(Listener):
         """
         channel_id = event.get("channel")
         
+        logger.info(f"[過去ログ処理] 開始: Team={team_id}, Channel={channel_id}")
+        
         # 処理済みチェック
         if is_channel_history_processed(team_id, channel_id):
-            logger.info(f"チャンネル過去ログ処理済みのためスキップ: {channel_id}")
+            logger.info(f"[過去ログ処理] スキップ（処理済み）: Channel={channel_id}")
             return
         
         try:
@@ -128,14 +147,22 @@ class SystemListener(Listener):
             seven_days_ago = now - datetime.timedelta(days=7)
             oldest_ts = seven_days_ago.timestamp()
             
-            logger.info(f"過去ログ取得開始: Channel={channel_id}, 期間=7日間")
+            logger.info(
+                f"[過去ログ処理] 取得条件: Channel={channel_id}, "
+                f"期間={seven_days_ago.strftime('%Y-%m-%d %H:%M:%S')} ～ {now.strftime('%Y-%m-%d %H:%M:%S')}, "
+                f"oldest_ts={oldest_ts}"
+            )
             
             # 過去メッセージを取得（ページネーション対応）
             all_messages = []
             cursor = None
+            page_count = 0
             
             while True:
                 try:
+                    page_count += 1
+                    logger.info(f"[過去ログ処理] API呼び出し: ページ={page_count}, cursor={cursor[:20] if cursor else 'None'}")
+                    
                     response = client.conversations_history(
                         channel=channel_id,
                         oldest=str(oldest_ts),
@@ -147,54 +174,101 @@ class SystemListener(Listener):
                         messages = response.get("messages", [])
                         all_messages.extend(messages)
                         
+                        logger.info(
+                            f"[過去ログ処理] ページ{page_count}取得成功: "
+                            f"{len(messages)}件（累計: {len(all_messages)}件）"
+                        )
+                        
                         # 次のページがあるか確認
                         cursor = response.get("response_metadata", {}).get("next_cursor")
                         if not cursor:
+                            logger.info(f"[過去ログ処理] 全ページ取得完了: {page_count}ページ")
                             break
                     else:
-                        logger.error(f"過去ログ取得失敗: {response.get('error')}")
+                        error_msg = response.get('error')
+                        logger.error(f"[過去ログ処理] API エラー: {error_msg}")
                         break
                         
                 except Exception as e:
-                    logger.error(f"過去ログ取得エラー: {e}", exc_info=True)
+                    logger.error(f"[過去ログ処理] 取得エラー: ページ={page_count}, {e}", exc_info=True)
                     break
             
-            logger.info(f"過去ログ取得完了: {len(all_messages)}件のメッセージ")
+            logger.info(f"[過去ログ処理] メッセージ取得完了: 総数={len(all_messages)}件")
             
             # 各メッセージを解析
             processed_count = 0
-            for msg in all_messages:
-                # Bot自身のメッセージや、サブタイプがあるメッセージはスキップ
-                if msg.get("bot_id") or msg.get("subtype"):
-                    continue
-                
+            skipped_count = 0
+            error_count = 0
+            
+            logger.info(f"[過去ログ解析開始] 対象: {len(all_messages)}件のメッセージ")
+            
+            for idx, msg in enumerate(all_messages, 1):
                 user_id = msg.get("user")
                 text = (msg.get("text") or "").strip()
                 ts = msg.get("ts")
+                bot_id = msg.get("bot_id")
+                subtype = msg.get("subtype")
                 
-                if not user_id or not text:
+                # スキップ条件のログ出力
+                if bot_id:
+                    logger.debug(f"[{idx}/{len(all_messages)}] スキップ（Bot投稿）: bot_id={bot_id}")
+                    skipped_count += 1
                     continue
                 
-                # ユーザー情報を取得
-                email: Optional[str] = get_user_email(client, user_id, logger)
+                if subtype:
+                    logger.debug(f"[{idx}/{len(all_messages)}] スキップ（サブタイプ）: subtype={subtype}")
+                    skipped_count += 1
+                    continue
                 
-                # 勤怠情報を解析・保存（通知なし）
-                if self.attendance_service.process_historical_message(
-                    workspace_id=team_id,
-                    user_id=user_id,
-                    email=email,
-                    text=text,
-                    channel_id=channel_id,
-                    ts=ts
-                ):
-                    processed_count += 1
+                if not user_id or not text:
+                    logger.debug(f"[{idx}/{len(all_messages)}] スキップ（データ不足）: user_id={user_id}, text_len={len(text) if text else 0}")
+                    skipped_count += 1
+                    continue
+                
+                # 処理対象のメッセージをログ出力
+                text_preview = text[:50] + "..." if len(text) > 50 else text
+                logger.info(
+                    f"[{idx}/{len(all_messages)}] 処理中: User={user_id}, "
+                    f"Text='{text_preview}', TS={ts}"
+                )
+                
+                try:
+                    # ユーザー情報を取得
+                    email: Optional[str] = get_user_email(client, user_id, logger)
+                    
+                    # 勤怠情報を解析・保存（通知なし）
+                    result = self.attendance_service.process_historical_message(
+                        workspace_id=team_id,
+                        user_id=user_id,
+                        email=email,
+                        text=text,
+                        channel_id=channel_id,
+                        ts=ts
+                    )
+                    
+                    if result:
+                        processed_count += 1
+                        logger.info(f"[{idx}/{len(all_messages)}] ✓ 保存成功: User={user_id}")
+                    else:
+                        logger.info(f"[{idx}/{len(all_messages)}] - AI解析失敗（勤怠情報なし）: User={user_id}")
+                        skipped_count += 1
+                        
+                except Exception as e:
+                    error_count += 1
+                    logger.error(
+                        f"[{idx}/{len(all_messages)}] ✗ 処理エラー: User={user_id}, "
+                        f"Error={str(e)}", exc_info=True
+                    )
             
             # 処理済みフラグを立てる
             mark_channel_history_processed(team_id, channel_id)
             
             logger.info(
-                f"過去ログ処理完了: Channel={channel_id}, "
-                f"解析={len(all_messages)}件, 保存={processed_count}件"
+                f"[過去ログ処理完了] Channel={channel_id}, "
+                f"総メッセージ数={len(all_messages)}件, "
+                f"保存成功={processed_count}件, "
+                f"スキップ={skipped_count}件, "
+                f"エラー={error_count}件"
             )
             
         except Exception as e:

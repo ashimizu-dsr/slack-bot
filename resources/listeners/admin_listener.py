@@ -492,7 +492,7 @@ class AdminListener(Listener):
                     "type": "header",
                     "text": {
                         "type": "plain_text",
-                        "text": f"📊 勤怠レポート ({target_date})"
+                        "text": f"{target_date}の勤怠"
                     }
                 },
                 {
@@ -555,7 +555,7 @@ class AdminListener(Listener):
             client.chat_postMessage(
                 channel=channel_id,
                 blocks=report_blocks,
-                text=f"勤怠レポート ({target_date})"
+                text=f"{target_date}の勤怠"
             )
             
             logger.info(f"デバッグレポート送信完了: User={user_id}, Date={target_date}, Groups={len(groups)}")

@@ -78,7 +78,7 @@ def send_daily_report(target_date: Optional[str] = None, workspace_id: str = Non
         response = client.chat_postMessage(
             channel=workspace_config["report_channel_id"],
             blocks=blocks,
-            text=f"{today}の勤怠レポート"
+            text=f"{today}の勤怠"
         )
         logger.info(f"✅ レポート送信成功: {response['ts']}")
 
