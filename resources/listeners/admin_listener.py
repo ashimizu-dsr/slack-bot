@@ -4,6 +4,7 @@
 このモジュールは、管理者向けのSlackイベントを受け取ります。
 - レポート設定ショートカット
 - グループ追加・編集・削除
+- デバッグ用レポートコマンド (/report)
 
 Pub/Sub対応:
 - handle_sync(): Slackイベントを受け取り、必要に応じてPub/Subに投げる（3秒以内）
@@ -11,6 +12,8 @@ Pub/Sub対応:
 """
 import json
 import logging
+import re
+import datetime
 
 from resources.listeners.Listener import Listener
 from resources.services.group_service import GroupService
@@ -348,6 +351,84 @@ class AdminListener(Listener):
                 logger.error(f"グループ削除失敗: {e}", exc_info=True)
                 ack()
 
+        # ==========================================
+        # 8. /report スラッシュコマンド（デバッグ用）
+        # ==========================================
+        @app.command("/report")
+        def on_report_command(ack, command, client):
+            """
+            /report スラッシュコマンドのハンドラー。
+            
+            DM限定で、指定された日付の全グループの勤怠状況をレポートします。
+            """
+            ack()
+            
+            team_id = command.get("team_id")
+            user_id = command.get("user_id")
+            channel_id = command.get("channel_id")
+            text = (command.get("text") or "").strip()
+            
+            try:
+                dynamic_client = get_slack_client(team_id)
+                
+                # DM判定（channel_idがDで始まるか確認）
+                if not channel_id.startswith("D"):
+                    dynamic_client.chat_postEphemeral(
+                        channel=channel_id,
+                        user=user_id,
+                        text="⚠️ このコマンドはDM（ダイレクトメッセージ）でのみ使用可能です。"
+                    )
+                    logger.warning(f"/report コマンドがDM以外で実行されました: User={user_id}, Channel={channel_id}")
+                    return
+                
+                # 日付のバリデーション（YYYYMMDD形式）
+                if not re.match(r'^\d{8}$', text):
+                    dynamic_client.chat_postMessage(
+                        channel=channel_id,
+                        text=(
+                            "⚠️ 日付の形式が不正です。\n"
+                            "正しい形式: `YYYYMMDD`（例: `/report 20260127`）"
+                        )
+                    )
+                    logger.warning(f"/report コマンドの日付形式エラー: {text}")
+                    return
+                
+                # 日付をYYYY-MM-DD形式に変換
+                target_date = f"{text[0:4]}-{text[4:6]}-{text[6:8]}"
+                
+                # 日付の妥当性チェック
+                try:
+                    datetime.datetime.strptime(target_date, "%Y-%m-%d")
+                except ValueError:
+                    dynamic_client.chat_postMessage(
+                        channel=channel_id,
+                        text=f"⚠️ 無効な日付です: {text}"
+                    )
+                    logger.warning(f"/report コマンドの日付が無効: {text}")
+                    return
+                
+                logger.info(f"/report コマンド実行: User={user_id}, Date={target_date}")
+                
+                # レポート生成（非同期処理へ）
+                self.publish_to_worker(
+                    team_id=team_id,
+                    event={
+                        "type": "report_command",
+                        "user_id": user_id,
+                        "channel_id": channel_id,
+                        "target_date": target_date
+                    }
+                )
+                
+                # 即座にフィードバック
+                dynamic_client.chat_postMessage(
+                    channel=channel_id,
+                    text=f"📊 {target_date} のレポートを生成中です..."
+                )
+                
+            except Exception as e:
+                logger.error(f"/report コマンド処理失敗: {e}", exc_info=True)
+
     # ======================================================================
     # 非同期処理: Pub/Subから戻ってきた後の重い処理
     # ======================================================================
@@ -355,19 +436,166 @@ class AdminListener(Listener):
         """
         Pub/Subから戻ってきた後の重い処理を実行します。
         
-        管理機能は基本的に軽量な処理なので、通常は非同期処理は不要です。
-        将来的に重い処理が必要になった場合にここに実装します。
-        
         Args:
             team_id: ワークスペースID
             event: イベントデータ
         """
-        logger.info(f"AdminListener.handle_async called (no operation): team_id={team_id}")
-        pass
+        event_type = event.get("type")
+        
+        try:
+            if event_type == "report_command":
+                self._generate_debug_report(team_id, event)
+            else:
+                logger.info(f"AdminListener.handle_async: 未処理のイベントタイプ ({event_type})")
+        except Exception as e:
+            logger.error(f"AdminListener非同期処理エラー ({event_type}): {e}", exc_info=True)
 
     # ======================================================================
     # プライベートメソッド
     # ======================================================================
+    def _generate_debug_report(self, team_id: str, event: dict):
+        """
+        デバッグ用レポートを生成してDMで送信します。
+        
+        Args:
+            team_id: ワークスペースID
+            event: イベントデータ（user_id, channel_id, target_dateを含む）
+        """
+        user_id = event.get("user_id")
+        channel_id = event.get("channel_id")
+        target_date = event.get("target_date")
+        
+        try:
+            client = get_slack_client(team_id)
+            group_service = GroupService()
+            
+            # 全グループを取得
+            groups = group_service.get_all_groups(team_id)
+            
+            if not groups:
+                client.chat_postMessage(
+                    channel=channel_id,
+                    text="⚠️ グループが登録されていません。"
+                )
+                return
+            
+            # 指定日の全勤怠データを取得
+            from resources.shared.db import get_today_records
+            all_records = get_today_records(team_id, target_date)
+            
+            # user_id -> record のマップを作成
+            record_map = {r["user_id"]: r for r in all_records}
+            
+            # レポートを生成
+            report_blocks = [
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": f"📊 勤怠レポート ({target_date})"
+                    }
+                },
+                {
+                    "type": "divider"
+                }
+            ]
+            
+            # グループごとに集計
+            for group in groups:
+                group_name = group.get("name", "無名グループ")
+                member_ids = group.get("member_ids", [])
+                
+                # グループ名
+                report_blocks.append({
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*{group_name}*"
+                    }
+                })
+                
+                # メンバーの勤怠状況
+                if not member_ids:
+                    report_blocks.append({
+                        "type": "context",
+                        "elements": [{
+                            "type": "mrkdwn",
+                            "text": "_メンバーが登録されていません_"
+                        }]
+                    })
+                else:
+                    member_lines = []
+                    for member_id in member_ids:
+                        if member_id in record_map:
+                            record = record_map[member_id]
+                            status = record.get("status", "未登録")
+                            note = record.get("note", "")
+                            
+                            # ステータスの日本語化
+                            status_jp = self._translate_status(status)
+                            
+                            if note:
+                                member_lines.append(f"• <@{member_id}>: {status_jp} ({note})")
+                            else:
+                                member_lines.append(f"• <@{member_id}>: {status_jp}")
+                        else:
+                            member_lines.append(f"• <@{member_id}>: _未登録_")
+                    
+                    report_blocks.append({
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "\n".join(member_lines)
+                        }
+                    })
+                
+                report_blocks.append({"type": "divider"})
+            
+            # レポートを送信
+            client.chat_postMessage(
+                channel=channel_id,
+                blocks=report_blocks,
+                text=f"勤怠レポート ({target_date})"
+            )
+            
+            logger.info(f"デバッグレポート送信完了: User={user_id}, Date={target_date}, Groups={len(groups)}")
+            
+        except Exception as e:
+            logger.error(f"デバッグレポート生成失敗: {e}", exc_info=True)
+            try:
+                client = get_slack_client(team_id)
+                client.chat_postMessage(
+                    channel=channel_id,
+                    text=f"⚠️ レポートの生成に失敗しました: {str(e)}"
+                )
+            except:
+                pass
+
+    def _translate_status(self, status: str) -> str:
+        """
+        ステータスを日本語に変換します。
+        
+        Args:
+            status: ステータスコード（late, vacation等）
+            
+        Returns:
+            日本語のステータス名
+        """
+        status_map = {
+            "vacation": "休暇（全日）",
+            "vacation_am": "午前休",
+            "vacation_pm": "午後休",
+            "vacation_hourly": "時間休",
+            "late": "遅刻",
+            "late_delay": "遅刻（遅延）",
+            "early_leave": "早退",
+            "out": "外出",
+            "remote": "在宅",
+            "shift": "シフト",
+            "other": "その他"
+        }
+        return status_map.get(status, status)
+
     def _update_parent_admin_modal(self, client, view_id, workspace_id):
         """
         親モーダル（レポート設定一覧）を最新データで更新します。

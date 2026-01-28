@@ -219,23 +219,26 @@ class AttendanceService:
         self, 
         workspace_id: str, 
         date_str: str, 
-        # 引数として groups と admin_ids を受け取れるようにするか、
-        # 内部で workspace_service を呼び出す形にします
     ) -> Dict[str, Any]:
         """
         日次レポート用のデータを「設定されたグループ」に基づいて取得します。
+        
+        Note:
+            v2.3以降、この関数は使用されていません。
+            レポート送信はnotification_service.send_daily_reportで直接行われます。
         """
         from services.workspace_service import WorkspaceService # 循環参照回避
+        from services.group_service import GroupService
         ws_service = WorkspaceService()
+        group_service = GroupService()
         
         report_data = {
-            "groups": [],
-            "admin_ids": ws_service.get_admin_ids(workspace_id)
+            "groups": []
         }
 
         try:
             # 1. モーダルで設定したグループ一覧を取得
-            groups = ws_service.get_all_groups(workspace_id)
+            groups = group_service.get_all_groups(workspace_id)
             
             # 2. その日の全勤怠記録を一括取得
             all_today_records = get_today_records(workspace_id, date_str)
@@ -256,13 +259,14 @@ class AttendanceService:
                 # グループ名と結果を格納
                 report_data["groups"].append({
                     "name": group["name"],
-                    "results": group_results
+                    "results": group_results,
+                    "admin_ids": group.get("admin_ids", [])
                 })
             
             return report_data
         except Exception as e:
             logger.error(f"レポートデータ構築失敗: {e}", exc_info=True)
-            return {"groups": [], "admin_ids": []}
+            return {"groups": []}
 
     def _validate_record(self, record: AttendanceRecord) -> None:
         """
@@ -377,3 +381,55 @@ class AttendanceService:
                 continue
         
         return processed_records
+
+    def process_historical_message(
+        self,
+        workspace_id: str,
+        user_id: str,
+        email: str,
+        text: str,
+        channel_id: str,
+        ts: str
+    ) -> bool:
+        """
+        過去メッセージから勤怠情報を解析・保存します（通知なし）。
+        
+        Args:
+            workspace_id: Slackワークスペースの一意ID
+            user_id: SlackユーザーID
+            email: ユーザーのメールアドレス
+            text: メッセージテキスト
+            channel_id: チャンネルID
+            ts: メッセージのタイムスタンプ
+            
+        Returns:
+            勤怠情報が抽出・保存された場合True、それ以外False
+            
+        Note:
+            この関数はBot参加時の過去ログ遡り専用です。
+            通知は一切行いません。
+        """
+        try:
+            from resources.services.nlp_service import extract_attendance_from_text
+            
+            # AI解析実行
+            extraction = extract_attendance_from_text(text, team_id=workspace_id, user_id=user_id)
+            
+            if not extraction:
+                return False
+            
+            # 抽出結果を処理
+            processed_records = self.process_ai_extraction_result(
+                workspace_id=workspace_id,
+                user_id=user_id,
+                email=email,
+                extracted_data=extraction,
+                channel_id=channel_id,
+                ts=ts
+            )
+            
+            return len(processed_records) > 0
+            
+        except Exception as e:
+            logger.error(f"過去メッセージ処理エラー: {e}", exc_info=True)
+            return False

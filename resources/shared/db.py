@@ -415,3 +415,59 @@ def save_workspace_config(
     except Exception as e:
         logger.error(f"ワークスペース設定保存エラー: {e}", exc_info=True)
         raise
+
+
+# ==========================================
+# チャンネル過去ログ処理管理
+# ==========================================
+
+def is_channel_history_processed(workspace_id: str, channel_id: str) -> bool:
+    """
+    チャンネルの過去ログ遡り処理が実行済みかどうかを確認します。
+    
+    Args:
+        workspace_id: Slackワークスペースの一意ID
+        channel_id: チャンネルID
+        
+    Returns:
+        処理済みの場合True、未処理の場合False
+    """
+    try:
+        doc_id = f"{workspace_id}_{channel_id}"
+        doc = db.collection(get_collection_name("channel_history_processed")).document(doc_id).get()
+        
+        if doc.exists:
+            logger.info(f"チャンネル過去ログ処理済み: {channel_id}")
+            return True
+        
+        return False
+    except Exception as e:
+        logger.error(f"チャンネル処理済みフラグ確認エラー: {e}", exc_info=True)
+        return False
+
+
+def mark_channel_history_processed(workspace_id: str, channel_id: str) -> None:
+    """
+    チャンネルの過去ログ遡り処理を処理済みとしてマークします。
+    
+    Args:
+        workspace_id: Slackワークスペースの一意ID
+        channel_id: チャンネルID
+        
+    Raises:
+        Exception: Firestore書き込みに失敗した場合
+    """
+    try:
+        doc_id = f"{workspace_id}_{channel_id}"
+        doc_ref = db.collection(get_collection_name("channel_history_processed")).document(doc_id)
+        
+        doc_ref.set({
+            "workspace_id": workspace_id,
+            "channel_id": channel_id,
+            "processed_at": firestore.SERVER_TIMESTAMP
+        })
+        
+        logger.info(f"チャンネル過去ログ処理済みマーク: {channel_id}")
+    except Exception as e:
+        logger.error(f"チャンネル処理済みフラグ保存エラー: {e}", exc_info=True)
+        raise
