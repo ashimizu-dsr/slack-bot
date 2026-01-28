@@ -188,7 +188,7 @@ def build_history_modal(
         "type": "modal",
         "callback_id": "history_view",
         "private_metadata": json.dumps({"target_user_id": user_id}),
-        "title": {"type": "plain_text", "text": "勤怠連絡一覧"},
+        "title": {"type": "plain_text", "text": "自分の勤怠"},
         "close": {"type": "plain_text", "text": "閉じる"},
         "blocks": blocks
     }
@@ -321,8 +321,8 @@ def build_admin_settings_modal(
     return {
         "type": "modal",
         "callback_id": "admin_settings_modal",
-        "title": {"type": "plain_text", "text": "レポート設定", "emoji": True},
-        "close": {"type": "plain_text", "text": "戻る", "emoji": True},
+        "title": {"type": "plain_text", "text": "設定", "emoji": True},
+        "close": {"type": "plain_text", "text": "閉じる", "emoji": True},
         "blocks": blocks
     }
 
@@ -341,7 +341,7 @@ def build_add_group_modal() -> Dict[str, Any]:
         "callback_id": "add_group_modal",
         "title": {"type": "plain_text", "text": "グループ編集"},
         "submit": {"type": "plain_text", "text": "保存"},
-        "close": {"type": "plain_text", "text": "戻る"},
+        "close": {"type": "plain_text", "text": "キャンセル"},
         "blocks": [
             {
                 "type": "input",
@@ -414,7 +414,7 @@ def build_edit_group_modal(
         "callback_id": "edit_group_modal",
         "title": {"type": "plain_text", "text": "グループ編集"},
         "submit": {"type": "plain_text", "text": "保存"},
-        "close": {"type": "plain_text", "text": "戻る"},
+        "close": {"type": "plain_text", "text": "キャンセル"},
         "blocks": [
             {
                 "type": "input",

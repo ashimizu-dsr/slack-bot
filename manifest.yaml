@@ -1,83 +1,59 @@
-{
-    "display_information": {
-        "name": "勤怠",
-        "description": "勤怠連絡を管理",
-        "background_color": "#2c2d30"
-    },
-    "features": {
-        "bot_user": {
-            "display_name": "kintai",
-            "always_online": true
-        },
-        "slash_commands": [
-            {
-                "command": "/report",
-                "url": "https://slack-kintai-bot-dev-478434513686.asia-northeast1.run.app/slack/events",
-                "description": "指定日の勤怠レポート生成（DM限定）",
-                "usage_hint": "YYYYMMDD (例: 20260127)",
-                "should_escape": false
-            }
-        ],
-        "shortcuts": [
-            {
-                "name": "レポート設定",
-                "type": "global",
-                "callback_id": "open_member_setup_modal",
-                "description": "通知先を設定する/課のメンバーを設定する"
-            },
-            {
-                "name": "勤怠連絡一覧",
-                "type": "global",
-                "callback_id": "open_kintai_history",
-                "description": "自分の勤怠連絡を確認する"
-            }
-        ]
-    },
-    "oauth_config": {
-        "redirect_urls": [
-            "https://slack-kintai-bot-dev-478434513686.asia-northeast1.run.app/slack/oauth_redirect"
-        ],
-        "scopes": {
-            "bot": [
-                "reactions:write",
-                "chat:write",
-                "im:write",
-                "users:read",
-                "channels:read",
-                "groups:read",
-                "commands",
-                "app_mentions:read",
-                "im:read",
-                "im:history",
-                "channels:history",
-                "groups:history",
-                "users:read.email",
-                "mpim:read"
-            ]
-        }
-    },
-    "settings": {
-        "org_deploy_enabled": false,
-        "socket_mode_enabled": false,
-        "token_rotation_enabled": false,
-        "app_home": {
-            "messages_tab_enabled": true,
-            "messages_tab_read_only_enabled": false
-        },
-        "event_subscriptions": {
-            "request_url": "https://slack-kintai-bot-dev-478434513686.asia-northeast1.run.app/slack/events",
-            "bot_events": [
-                "member_joined_channel",
-                "message.channels",
-                "message.im"
-            ]
-        },
-        "interactivity": {
-            "is_enabled": true,
-            "request_url": "https://slack-kintai-bot-dev-478434513686.asia-northeast1.run.app/slack/events"
-        },
-        "org_deploy_enabled": false,
-        "socket_mode_enabled": false,
-        "token_rotation_enabled": false
-    }
-}
+display_information:
+  name: 勤怠
+  description: 勤怠連絡の集計と通知
+  background_color: "#2c2d30"
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: kintai
+    always_online: true
+  shortcuts:
+    - name: 自分の勤怠
+      type: global
+      callback_id: open_kintai_history
+      description: 自分の勤怠の確認
+    - name: 設定
+      type: global
+      callback_id: open_member_setup_modal
+      description: 勤怠連絡の通知先や集計対象者の設定
+  slash_commands:
+    - command: /report
+      url: https://slack-kintai-bot-dev-478434513686.asia-northeast1.run.app/slack/events
+      description: 指定日の勤怠状況の確認（当コマンドはDM内のみ/チャンネル内使用不可）
+      usage_hint: "YYYYMMDD (例: 20260127)"
+      should_escape: false
+oauth_config:
+  redirect_urls:
+    - https://slack-kintai-bot-dev-478434513686.asia-northeast1.run.app/slack/oauth_redirect
+  scopes:
+    bot:
+      - reactions:write
+      - chat:write
+      - im:write
+      - users:read
+      - channels:read
+      - groups:read
+      - commands
+      - app_mentions:read
+      - im:read
+      - im:history
+      - channels:history
+      - groups:history
+      - users:read.email
+      - mpim:read
+settings:
+  event_subscriptions:
+    request_url: https://slack-kintai-bot-dev-478434513686.asia-northeast1.run.app/slack/events
+    bot_events:
+      - member_joined_channel
+      - message.channels
+      - message.im
+  interactivity:
+    is_enabled: true
+    request_url: https://slack-kintai-bot-dev-478434513686.asia-northeast1.run.app/slack/events
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
