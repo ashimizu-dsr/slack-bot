@@ -258,163 +258,35 @@ class NotificationService:
             from resources.constants import STATUS_TRANSLATION
             logger.info(f"グループ '{group_name}' のステータスマップ: {status_map}")
             
-            # 全休
-            if "vacation" in status_map:
-                users_text = " \n\t".join(status_map["vacation"])
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": f"*全休：* \n\t{users_text}"}
-                })
-            else:
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": "*全休：* \n\tなし"}
-                })
+            # 該当者がいる区分のみ表示（区分の定義順）
+            status_order = [
+                ("vacation", "全休"),
+                ("vacation_am", "AM休"),
+                ("vacation_pm", "PM休"),
+                ("vacation_hourly", "時間休"),
+                ("late_delay", "電車遅延"),
+                ("late", "遅刻"),
+                ("remote", "在宅"),
+                ("out", "外出"),
+                ("shift", "シフト勤務"),
+                ("early_leave", "早退"),
+                ("other", "その他")
+            ]
             
-            # AM休
-            if "vacation_am" in status_map:
-                users_text = " \n\t".join(status_map["vacation_am"])
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": f"*AM休：* \n\t{users_text}"}
-                })
-            else:
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": "*AM休：* \n\tなし"}
-                })
+            # 区分ごとの区切り位置（この区分の後にdividerを入れる）
+            divider_after = {"vacation_hourly", "late", "remote", "out", "shift", "early_leave", "other"}
             
-            # PM休
-            if "vacation_pm" in status_map:
-                users_text = " \n\t".join(status_map["vacation_pm"])
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": f"*PM休：* \n\t{users_text}"}
-                })
-            else:
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": "*PM休：* \n\tなし"}
-                })
-            
-            # 時間休
-            if "vacation_hourly" in status_map:
-                users_text = " \n\t".join(status_map["vacation_hourly"])
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": f"*時間休：* \n\t{users_text}"}
-                })
-            else:
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": "*時間休：* \n\tなし"}
-                })
-            
-            # 休暇系の後に区切り
-            blocks.append({"type": "divider"})
-            
-            # 電車遅延
-            if "late_delay" in status_map:
-                users_text = " \n\t".join(status_map["late_delay"])
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": f"*電車遅延：* \n\t{users_text}"}
-                })
-            else:
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": "*電車遅延：* \n\tなし"}
-                })
-            
-            # 遅刻
-            if "late" in status_map:
-                users_text = " \n\t".join(status_map["late"])
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": f"*遅刻：* \n\t{users_text}"}
-                })
-            else:
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": "*遅刻：* \n\tなし"}
-                })
-            
-            # 遅刻系の後に区切り
-            blocks.append({"type": "divider"})
-            
-            # 在宅
-            if "remote" in status_map:
-                users_text = " \n\t".join(status_map["remote"])
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": f"*在宅：* \n\t{users_text}"}
-                })
-            else:
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": "*在宅：* \n\tなし"}
-                })
-            
-            # 在宅の後に区切り
-            blocks.append({"type": "divider"})
-            
-            # 外出
-            if "out" in status_map:
-                users_text = " \n\t".join(status_map["out"])
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": f"*外出：* \n\t{users_text}"}
-                })
-            else:
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": "*外出：* \n\tなし"}
-                })
-            
-            # 外出の後に区切り
-            blocks.append({"type": "divider"})
-            
-            # シフト勤務
-            if "shift" in status_map:
-                users_text = " \n\t".join(status_map["shift"])
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": f"*シフト勤務：* \n\t{users_text}"}
-                })
-            else:
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": "*シフト勤務：* \n\tなし"}
-                })
-            blocks.append({"type": "divider"})
-            
-            # 早退
-            if "early_leave" in status_map:
-                users_text = " \n\t".join(status_map["early_leave"])
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": f"*早退：* \n\t{users_text}"}
-                })
-            else:
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": "*早退：* \n\tなし"}
-                })
-            blocks.append({"type": "divider"})
-            
-            # その他
-            if "other" in status_map:
-                users_text = " \n\t".join(status_map["other"])
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": f"*その他：* \n\t{users_text}"}
-                })
-            else:
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": "*その他：* \n\tなし"}
-                })
-            blocks.append({"type": "divider"})
+            for status_key, status_label in status_order:
+                if status_key in status_map:
+                    users_text = " \n\t".join(status_map[status_key])
+                    blocks.append({
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": f"*{status_label}：* \n\t{users_text}"}
+                    })
+                    
+                    # 指定された区分の後にdividerを追加
+                    if status_key in divider_after:
+                        blocks.append({"type": "divider"})
 
             # 8. メッセージ送信 
             try:

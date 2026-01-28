@@ -440,6 +440,10 @@ class AdminListener(Listener):
         """
         デバッグ用レポートを生成してDMで送信します。
         
+        チャンネルレポートと同じフォーマットで表示しますが、以下の違いがあります：
+        - 通知先（admin_ids）は表示しない
+        - 該当者のない区分も「なし」として表示する
+        
         Args:
             team_id: ワークスペースID
             event: イベントデータ（user_id, channel_id, target_dateを含む）
@@ -464,82 +468,124 @@ class AdminListener(Listener):
             
             # 指定日の全勤怠データを取得
             from resources.shared.db import get_today_records
-            all_records = get_today_records(team_id, target_date)
+            all_today_records = get_today_records(team_id, target_date)
+            attendance_lookup = {r["user_id"]: r for r in all_today_records}
             
-            # user_id -> record のマップを作成
-            record_map = {r["user_id"]: r for r in all_records}
+            # 日付フォーマットの準備
+            try:
+                dt = datetime.datetime.strptime(target_date, "%Y-%m-%d").date()
+            except:
+                dt = datetime.date.today()
+                logger.warning(f"日付のパースに失敗したため今日の日付を使用: {dt}")
             
-            # レポートを生成
-            report_blocks = [
-                {
-                    "type": "header",
-                    "text": {
-                        "type": "plain_text",
-                        "text": f"{target_date}の勤怠"
-                    }
-                },
-                {
-                    "type": "divider"
-                }
-            ]
+            weekday_list = ["月", "火", "水", "木", "金", "土", "日"]
+            month_day = dt.strftime('%m/%d')
+            weekday = weekday_list[dt.weekday()]
             
-            # グループごとに集計
+            # 全メンバーのIDを抽出（名前解決用）
+            all_member_ids = set()
+            for g in groups:
+                all_member_ids.update(g.get("member_ids", []))
+            
+            # IDから名前への変換マップを作成
+            user_name_map = {}
+            try:
+                response = client.users_list()
+                if response["ok"]:
+                    for user in response["members"]:
+                        if user["id"] in all_member_ids:
+                            profile = user.get("profile", {})
+                            name = (
+                                profile.get("display_name") or 
+                                user.get("real_name") or 
+                                user.get("name", "")
+                            )
+                            # ＠マークを除去
+                            if name and name.startswith("@"):
+                                name = name[1:]
+                            user_name_map[user["id"]] = name
+            except Exception as e:
+                logger.error(f"ユーザー名取得失敗: {e}", exc_info=True)
+            
+            # グループごとにレポートを生成
             for group in groups:
                 group_name = group.get("name", "無名グループ")
                 member_ids = group.get("member_ids", [])
                 
-                # グループ名
-                report_blocks.append({
+                # レポートブロックの構築
+                blocks = []
+                
+                # タイトル（グループ名を含む）
+                blocks.append({
                     "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"*{group_name}*"
-                    }
+                    "text": {"type": "mrkdwn", "text": f"*{month_day}({weekday})の勤怠（{group_name}）*"}
                 })
+                blocks.append({"type": "divider"})
                 
-                # メンバーの勤怠状況
-                if not member_ids:
-                    report_blocks.append({
-                        "type": "context",
-                        "elements": [{
-                            "type": "mrkdwn",
-                            "text": "_メンバーが登録されていません_"
-                        }]
-                    })
-                else:
-                    member_lines = []
-                    for member_id in member_ids:
-                        if member_id in record_map:
-                            record = record_map[member_id]
-                            status = record.get("status", "未登録")
-                            note = record.get("note", "")
-                            
-                            # ステータスの日本語化
-                            status_jp = self._translate_status(status)
-                            
-                            if note:
-                                member_lines.append(f"• <@{member_id}>: {status_jp} ({note})")
-                            else:
-                                member_lines.append(f"• <@{member_id}>: {status_jp}")
+                # ステータスごとにグルーピング
+                status_map = {}
+                for uid in member_ids:
+                    if uid in attendance_lookup:
+                        record = attendance_lookup[uid]
+                        st = record.get('status', 'other')
+                        display_name = user_name_map.get(uid, uid)
+                        note = record.get('note', '')
+                        
+                        if st not in status_map:
+                            status_map[st] = []
+                        
+                        # 備考がある場合はカッコ内に追加
+                        if note:
+                            status_map[st].append(f"{display_name}（{note}）")
                         else:
-                            member_lines.append(f"• <@{member_id}>: _未登録_")
-                    
-                    report_blocks.append({
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": "\n".join(member_lines)
-                        }
-                    })
+                            status_map[st].append(display_name)
                 
-                report_blocks.append({"type": "divider"})
-            
-            # レポートを送信
-            client.chat_postMessage(
-                channel=channel_id,
-                blocks=report_blocks,
-                text=f"{target_date}の勤怠"
-            )
+                # 区分の定義順（該当者がいない場合も「なし」で表示）
+                status_order = [
+                    ("vacation", "全休"),
+                    ("vacation_am", "AM休"),
+                    ("vacation_pm", "PM休"),
+                    ("vacation_hourly", "時間休"),
+                    ("late_delay", "電車遅延"),
+                    ("late", "遅刻"),
+                    ("remote", "在宅"),
+                    ("out", "外出"),
+                    ("shift", "シフト勤務"),
+                    ("early_leave", "早退"),
+                    ("other", "その他")
+                ]
+                
+                # 区分ごとの区切り位置（この区分の後にdividerを入れる）
+                divider_after = {"vacation_hourly", "late", "remote", "out", "shift", "early_leave", "other"}
+                
+                for status_key, status_label in status_order:
+                    if status_key in status_map:
+                        users_text = " \n\t".join(status_map[status_key])
+                        blocks.append({
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": f"*{status_label}：* \n\t{users_text}"}
+                        })
+                    else:
+                        # 該当者なしの場合も表示
+                        blocks.append({
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": f"*{status_label}：* \n\tなし"}
+                        })
+                    
+                    # 指定された区分の後にdividerを追加
+                    if status_key in divider_after:
+                        blocks.append({"type": "divider"})
+                
+                # レポートを送信
+                try:
+                    client.chat_postMessage(
+                        channel=channel_id,
+                        blocks=blocks,
+                        text=f"{group_name}の{month_day}({weekday})の勤怠"
+                    )
+                    logger.info(f"デバッグレポート送信成功: Group={group_name}, Date={target_date}")
+                except Exception as e:
+                    logger.error(f"グループレポート送信エラー: Group={group_name}, {e}")
             
             logger.info(f"デバッグレポート送信完了: User={user_id}, Date={target_date}, Groups={len(groups)}")
             
@@ -553,31 +599,6 @@ class AdminListener(Listener):
                 )
             except:
                 pass
-
-    def _translate_status(self, status: str) -> str:
-        """
-        ステータスを日本語に変換します。
-        
-        Args:
-            status: ステータスコード（late, vacation等）
-            
-        Returns:
-            日本語のステータス名
-        """
-        status_map = {
-            "vacation": "休暇（全日）",
-            "vacation_am": "午前休",
-            "vacation_pm": "午後休",
-            "vacation_hourly": "時間休",
-            "late": "遅刻",
-            "late_delay": "遅刻（遅延）",
-            "early_leave": "早退",
-            "out": "外出",
-            "remote": "在宅",
-            "shift": "シフト",
-            "other": "その他"
-        }
-        return status_map.get(status, status)
 
     def _update_parent_admin_modal(self, client, view_id, workspace_id):
         """
