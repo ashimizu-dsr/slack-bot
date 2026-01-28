@@ -141,75 +141,94 @@ def extract_attendance_from_text(
     base_date = datetime.date.today() 
     
     try:
-        # システム指示の定義（最新ルール 2026-01-28: Few-shot最適化版）
+        # システム指示の定義（最新ルール 2026-01-28: 実例ベース最適化版）
         system_instruction = (
             "You are an attendance data extractor. Output JSON only.\n"
             "Format: {\"is_attendance\": bool, \"attendances\": [{\"date\": \"YYYY-MM-DD\", \"status\": \"string\", \"note\": \"string\", \"action\": \"save\"|\"delete\"}]}\n\n"
 
-            "RULES:\n"
-            "1. CANCELLATION WORDS: If message contains '取消/キャンセル/取り消し/削除' -> action='delete'\n"
-            "2. MULTIPLE STATUSES: If one day has 2+ statuses (e.g., '在宅(午後休)', '午前休+午後出社'), use status='other' and put details in note.\n"
-            "3. ARROW (A->B) - CRITICAL:\n"
-            "   - If B is specific status (在宅/休暇/遅刻 etc) -> Extract B's status, action='save' (this updates the plan)\n"
-            "   - If B='出社' (plain office, returning to normal) -> action='delete', status='other', note='予定変更'\n"
-            "   - If B has mixed statuses -> status='other', action='save'\n"
-            "4. DATES: Process '明日/明後日' correctly using 'Today' field. Support date ranges like '1/27〜1/29'.\n"
-            "5. LATENESS DETECTION: '〜後に出社/〜してから出社/10時に出社/遅れて出社' -> status='late'. Reason goes to note.\n"
-            "6. HEALTH REASONS: If specific symptoms mentioned (頭痛/発熱/眩暈/腹痛/インフルエンザ etc), format note as '体調不良(症状)'.\n"
-            "7. LOCATION: Only use status='out' for specific places (e.g., '九段下'). Plain '出社' without context='other'\n"
-            "8. NOTE FIELD: Extract ONLY reasons, times, or details. DO NOT repeat the status type (e.g., if status='vacation_am', note should NOT be '午前休').\n\n"
+            "CORE RULES:\n"
+            "1. PLAIN '出社': If message says just '出社' (e.g., '1/26...出社') -> action='delete' (returning to normal work)\n"
+            "2. ARROW (A->B): Extract ONLY B. Ignore A completely.\n"
+            "   - If B='出社' -> action='delete'\n"
+            "   - If B is specific status -> Extract B's status, action='save'\n"
+            "3. AFTERNOON ATTENDANCE: '午後から出社/午後出社' -> status='vacation_am' OR status='other' with note='午後出社予定'\n"
+            "4. VAGUE EXPRESSIONS: If uncertain timing (e.g., '午前は病院。出社したら報告') -> status='other', include all context in note\n"
+            "5. NOTE EXTRACTION:\n"
+            "   - Main reason: Extract core cause concisely (e.g., '最寄り駅運転見合わせのため' not full sentence)\n"
+            "   - Secondary info: Put in parentheses (e.g., '自社都合（昼休憩13:00〜14:00）')\n"
+            "   - Time details: Always include if mentioned (e.g., '16:30早退', '午後出社予定')\n"
+            "6. HEALTH: Format as '体調不良(症状)'\n"
+            "7. CANCELLATION: '取消/キャンセル/取り消し/削除' -> action='delete'\n\n"
 
             "STATUS:\n"
-            "- vacation/vacation_am/vacation_pm/vacation_hourly: Paid leave\n"
-            "- out: Specific office location or business trip\n"
+            "- vacation/vacation_am/vacation_pm/vacation_hourly: Leave\n"
+            "- out: Specific location (e.g., '九段下')\n"
             "- late_delay: Train delay | late: General lateness\n"
             "- remote: Work from home\n"
             "- early_leave: Leave early\n"
-            "- other: Office return, mixed states, deletions, or unknown\n"
+            "- other: Mixed states, vague expressions, or uncertain timing\n"
         )
 
         # API呼び出し
         model_name = "gpt-4o-mini-2024-07-18"  # 最新の安定版を明示的に指定
         
-        # Few-shot examples（実例を追加して学習効果を高める）
+        # Few-shot examples（実例ベース：ユーザーの実際の使用パターンに基づく）
         few_shot_examples = [
-            # 例1: 在宅勤務（理由なし）
+            # 例1: 運転見合わせで在宅（重要情報を簡潔に）
             {
                 "role": "user",
-                "content": "Today: 2026-01-28 (Tuesday)\nText: 明日は在宅です"
+                "content": "Today: 2026-01-28 (Tuesday)\nText: おはようございます。最寄り駅から運転見合わせており、出社が大幅に遅れると予想されるため本日在宅勤務に切り替えさせていただきます。"
             },
             {
                 "role": "assistant",
-                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-29", "status": "remote", "note": "", "action": "save"}]}'
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "remote", "note": "最寄り駅運転見合わせのため", "action": "save"}]}'
             },
-            # 例1-2: 在宅勤務（体調不良）
+            # 例2: 複数日+出社（出社は削除）
             {
                 "role": "user",
-                "content": "Today: 2026-01-28 (Tuesday)\nText: 本日、頭痛と眩暈がするため在宅勤務"
+                "content": "Today: 2026-01-25 (Saturday)\nText: 直前で恐縮ですが勤怠を下記の通りとさせて下さい\n1/26...出社\n1/27...午前中在宅/午後出社\n1/30...午後在宅(社用の為)"
             },
             {
                 "role": "assistant",
-                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "remote", "note": "体調不良(頭痛・眩暈)", "action": "save"}]}'
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-26", "status": "other", "note": "予定変更", "action": "delete"}, {"date": "2026-01-27", "status": "other", "note": "AM在宅/PM出社", "action": "save"}, {"date": "2026-01-30", "status": "other", "note": "AM出社/PM在宅(社用の為)", "action": "save"}]}'
             },
-            # 例1-3: 在宅勤務（発熱）
+            # 例3: 矢印記法（Bだけ抽出、早退時刻を記載）
             {
                 "role": "user",
-                "content": "Today: 2026-01-28 (Tuesday)\nText: 発熱のため本日在宅にします"
+                "content": "Today: 2026-01-23 (Friday)\nText: 直前の連絡となり申し訳ございませんが、自社都合により明日の勤怠を以下の通り変更いたします。\n在宅(通常勤務) → 在宅(16:30早退)"
             },
             {
                 "role": "assistant",
-                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "remote", "note": "体調不良(発熱)", "action": "save"}]}'
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-24", "status": "other", "note": "在宅(16:30早退)", "action": "save"}]}'
             },
-            # 例2: 取消（削除理由を簡潔に）
+            # 例4: 在宅（メイン情報+補足情報）
             {
                 "role": "user",
-                "content": "Today: 2026-01-28 (Tuesday)\nText: 明日の早退は取消します"
+                "content": "Today: 2026-01-28 (Tuesday)\nText: おはようございます。本日自社都合で在宅勤務に変更させてください。また、昼休憩を13時〜14時で取ります。"
             },
             {
                 "role": "assistant",
-                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-29", "status": "other", "note": "早退取消", "action": "delete"}]}'
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "remote", "note": "自社都合（昼休憩13:00〜14:00）", "action": "save"}]}'
             },
-            # 例3: 矢印記法（出社→在宅に変更、理由付き）
+            # 例5: 午後出社（午前休または詳細記載）
+            {
+                "role": "user",
+                "content": "Today: 2026-01-28 (Tuesday)\nText: 本日、家族の通院のため午後から出社します。"
+            },
+            {
+                "role": "assistant",
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "vacation_am", "note": "家族の通院", "action": "save"}]}'
+            },
+            # 例6: 曖昧な表現（午前は病院だが出社時刻不明）
+            {
+                "role": "user",
+                "content": "Today: 2026-01-28 (Tuesday)\nText: 明日(1/29)の午前は病院に行ってきます。(出社したら、再度ご報告させて頂きます。)"
+            },
+            {
+                "role": "assistant",
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-29", "status": "other", "note": "午前は病院。出社したら、再度報告", "action": "save"}]}'
+            },
+            # 例7: インフルエンザで複数日在宅
             {
                 "role": "user",
                 "content": "Today: 2026-01-27 (Monday)\nText: インフルエンザB型と診断されたため、1/27(火)〜1/29(木) 出社→在宅勤務"
@@ -218,16 +237,7 @@ def extract_attendance_from_text(
                 "role": "assistant",
                 "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-27", "status": "remote", "note": "体調不良(インフルエンザB型)", "action": "save"}, {"date": "2026-01-28", "status": "remote", "note": "体調不良(インフルエンザB型)", "action": "save"}, {"date": "2026-01-29", "status": "remote", "note": "体調不良(インフルエンザB型)", "action": "save"}]}'
             },
-            # 例3-2: 矢印記法（出社への変更=削除）
-            {
-                "role": "user",
-                "content": "Today: 2026-01-27 (Monday)\nText: 1/31(土) 在宅 -> 出社"
-            },
-            {
-                "role": "assistant",
-                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-31", "status": "other", "note": "予定変更", "action": "delete"}]}'
-            },
-            # 例3-3: 矢印記法（出社→全休に変更）
+            # 例8: 出社→全休
             {
                 "role": "user",
                 "content": "Today: 2026-01-27 (Monday)\nText: 1/30(金) 出社→全休（所用の為）"
@@ -236,52 +246,25 @@ def extract_attendance_from_text(
                 "role": "assistant",
                 "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-30", "status": "vacation", "note": "所用", "action": "save"}]}'
             },
-            # 例3-4: 複合ステータス（在宅+午後休）
+            # 例9: 在宅→出社（削除）
             {
                 "role": "user",
-                "content": "Today: 2026-01-27 (Monday)\nText: 2/3(月) 出社 -> 在宅(午後休)"
+                "content": "Today: 2026-01-27 (Monday)\nText: 1/31(土) 在宅 -> 出社"
             },
             {
                 "role": "assistant",
-                "content": '{"is_attendance": true, "attendances": [{"date": "2026-02-03", "status": "other", "note": "在宅(午後休)", "action": "save"}]}'
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-31", "status": "other", "note": "予定変更", "action": "delete"}]}'
             },
-            # 例5: 複合ステータス（午前休+在宅）
+            # 例10: 取消
             {
                 "role": "user",
-                "content": "Today: 2026-01-28 (Tuesday)\nText: 明日は午前休、午後から在宅"
+                "content": "Today: 2026-01-28 (Tuesday)\nText: 明日の早退は取消します"
             },
             {
                 "role": "assistant",
-                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-29", "status": "other", "note": "午前休・午後在宅", "action": "save"}]}'
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-29", "status": "other", "note": "早退取消", "action": "delete"}]}'
             },
-            # 例6: 時間休（時間を記載）
-            {
-                "role": "user",
-                "content": "Today: 2026-01-28 (Tuesday)\nText: 1/30 時間休 10-12時"
-            },
-            {
-                "role": "assistant",
-                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-30", "status": "vacation_hourly", "note": "10-12時", "action": "save"}]}'
-            },
-            # 例7: 午前休（体調不良）
-            {
-                "role": "user",
-                "content": "Today: 2026-01-28 (Tuesday)\nText: 明日午前休（体調不良で病院）"
-            },
-            {
-                "role": "assistant",
-                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-29", "status": "vacation_am", "note": "体調不良(病院)", "action": "save"}]}'
-            },
-            # 例8: 午前休（私用）
-            {
-                "role": "user",
-                "content": "Today: 2026-01-28 (Tuesday)\nText: 明日午前休（私用）"
-            },
-            {
-                "role": "assistant",
-                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-29", "status": "vacation_am", "note": "私用", "action": "save"}]}'
-            },
-            # 例9: 遅刻（電車遅延）
+            # 例11: 電車遅延
             {
                 "role": "user",
                 "content": "Today: 2026-01-28 (Tuesday)\nText: 電車遅延で遅刻します"
@@ -290,7 +273,7 @@ def extract_attendance_from_text(
                 "role": "assistant",
                 "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "late_delay", "note": "", "action": "save"}]}'
             },
-            # 例10: 遅刻（病院）
+            # 例12: 病院後に出社（遅刻）
             {
                 "role": "user",
                 "content": "Today: 2026-01-28 (Tuesday)\nText: 本日体調不良のため、病院行った後に出社致します"
@@ -298,33 +281,6 @@ def extract_attendance_from_text(
             {
                 "role": "assistant",
                 "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "late", "note": "体調不良(病院)", "action": "save"}]}'
-            },
-            # 例11: 遅刻（用事）
-            {
-                "role": "user",
-                "content": "Today: 2026-01-28 (Tuesday)\nText: 用事を済ませてから出社します"
-            },
-            {
-                "role": "assistant",
-                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "late", "note": "用事", "action": "save"}]}'
-            },
-            # 例12: 遅刻（時間指定）
-            {
-                "role": "user",
-                "content": "Today: 2026-01-28 (Tuesday)\nText: 10時に出社します"
-            },
-            {
-                "role": "assistant",
-                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "late", "note": "10時", "action": "save"}]}'
-            },
-            # 例13: 外出（場所を記載）
-            {
-                "role": "user",
-                "content": "Today: 2026-01-28 (Tuesday)\nText: 九段下に出社します"
-            },
-            {
-                "role": "assistant",
-                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "out", "note": "九段下", "action": "save"}]}'
             }
         ]
         
