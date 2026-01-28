@@ -19,6 +19,27 @@ from typing import Optional, Dict, Any
 import base64
 import json
 
+# --- 強制ログフラッシュ設定 ---
+# Pythonの出力をバッファリングせず、即座にCloud Runのログへ送る
+os.environ["PYTHONUNBUFFERED"] = "1"
+# 標準出力をラインバッファリング（一行ごとに即送信）に設定
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
+
+# 非常にシンプルなログフォーマットを強制適用
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(levelname)s: %(message)s',
+    stream=sys.stdout
+)
+logger = logging.getLogger(__name__)
+
+# 起動直後に「絶対に」出るはずのログ
+print("!!! CRITICAL: SYSTEM BOOTING UP !!!", file=sys.stdout, flush=True)
+logger.info("!!! LOGGER: SYSTEM BOOTING UP !!!")
+
+
+
 # パス追加処理（プロジェクトルートを認識させる）
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
