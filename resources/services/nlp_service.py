@@ -148,17 +148,20 @@ def extract_attendance_from_text(
 
             "CORE RULES:\n"
             "1. PLAIN '出社': If message says just '出社' (e.g., '1/26...出社') -> action='delete' (returning to normal work)\n"
-            "2. ARROW (A->B): Extract ONLY B. Ignore A completely.\n"
+            "2. '変更' KEYWORD: '変更' means UPDATE, not delete. Always action='save' when '変更' is mentioned.\n"
+            "3. ARROW (A->B): Extract ONLY B. Ignore A completely. Always action='save' unless B='出社'.\n"
             "   - If B='出社' -> action='delete'\n"
-            "   - If B is specific status -> Extract B's status, action='save'\n"
-            "3. AFTERNOON ATTENDANCE: '午後から出社/午後出社' -> status='vacation_am' OR status='other' with note='午後出社予定'\n"
-            "4. VAGUE EXPRESSIONS: If uncertain timing (e.g., '午前は病院。出社したら報告') -> status='other', include all context in note\n"
-            "5. NOTE EXTRACTION:\n"
+            "   - If B is any other status (even if A and B are similar) -> Extract B's status, action='save'\n"
+            "   - Examples: '在宅→在宅(早退)' -> Extract '在宅(早退)', action='save'\n"
+            "4. DATE EXTRACTION: If date is explicitly written (e.g., '1/23(金)'), use that date. Ignore relative dates like '明日' in this case.\n"
+            "5. AFTERNOON ATTENDANCE: '午後から出社/午後出社' -> status='vacation_am' OR status='other' with note='午後出社予定'\n"
+            "6. VAGUE EXPRESSIONS: If uncertain timing (e.g., '午前は病院。出社したら報告') -> status='other', include all context in note\n"
+            "7. NOTE EXTRACTION:\n"
             "   - Main reason: Extract core cause concisely (e.g., '最寄り駅運転見合わせのため' not full sentence)\n"
             "   - Secondary info: Put in parentheses (e.g., '自社都合（昼休憩13:00〜14:00）')\n"
             "   - Time details: Always include if mentioned (e.g., '16:30早退', '午後出社予定')\n"
-            "6. HEALTH: Format as '体調不良(症状)'\n"
-            "7. CANCELLATION: '取消/キャンセル/取り消し/削除' -> action='delete'\n\n"
+            "8. HEALTH: Format as '体調不良(症状)'\n"
+            "9. CANCELLATION: Only '取消/キャンセル/取り消し/削除' -> action='delete'. '変更' is NOT cancellation.\n\n"
 
             "STATUS:\n"
             "- vacation/vacation_am/vacation_pm/vacation_hourly: Leave\n"
@@ -192,16 +195,16 @@ def extract_attendance_from_text(
                 "role": "assistant",
                 "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-26", "status": "other", "note": "予定変更", "action": "delete"}, {"date": "2026-01-27", "status": "other", "note": "AM在宅/PM出社", "action": "save"}, {"date": "2026-01-30", "status": "other", "note": "AM出社/PM在宅(社用の為)", "action": "save"}]}'
             },
-            # 例3: 矢印記法（Bだけ抽出、早退時刻を記載）
+            # 例3: 矢印記法（在宅→在宅(早退)への変更、日付明示）
             {
                 "role": "user",
-                "content": "Today: 2026-01-23 (Friday)\nText: 直前の連絡となり申し訳ございませんが、自社都合により明日の勤怠を以下の通り変更いたします。\n在宅(通常勤務) → 在宅(16:30早退)"
+                "content": "Today: 2026-01-22 (Thursday)\nText: 直前の連絡となり申し訳ございませんが、自社都合により明日の勤怠を以下の通り変更いたします。\n1/23(金)\n在宅(通常勤務) → 在宅(16:30早退)\n勤怠一覧は更新済みです。"
             },
             {
                 "role": "assistant",
-                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-24", "status": "other", "note": "在宅(16:30早退)", "action": "save"}]}'
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-23", "status": "other", "note": "在宅(16:30早退)", "action": "save"}]}'
             },
-            # 例4: 在宅（メイン情報+補足情報）
+            # 例4: 在宅に変更（メイン情報+補足情報）
             {
                 "role": "user",
                 "content": "Today: 2026-01-28 (Tuesday)\nText: おはようございます。本日自社都合で在宅勤務に変更させてください。また、昼休憩を13時〜14時で取ります。"
