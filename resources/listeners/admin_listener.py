@@ -63,7 +63,7 @@ class AdminListener(Listener):
                 dynamic_client = get_slack_client(team_id)
                 group_service = GroupService()
                 
-                # 1. まず空のuser_name_mapでモーダルを高速に開く
+                # 1. まず空のモーダルを即座に開く
                 view = create_admin_settings_modal(
                     groups=[], 
                     user_name_map={}
@@ -73,22 +73,27 @@ class AdminListener(Listener):
                 
                 logger.info(f"レポート設定モーダル表示: Workspace={team_id}")
                 
-                # 2. モーダルを開いた後、バックグラウンドでグループを取得して更新
+                # 2. モーダルを開いた後、データを取得して1回だけ更新
                 if response["ok"]:
                     view_id = response["view"]["id"]
                     
-                    # グループ取得（エラー時は初期値）
+                    # グループ取得
                     try:
                         groups = group_service.get_all_groups(team_id)
                     except Exception as e:
                         logger.error(f"グループ取得失敗: {e}", exc_info=True)
                         groups = []
                     
-                    # グループ情報でモーダルを更新
+                    # ユーザー名も一緒に取得
+                    user_name_map = {}
+                    if groups:
+                        user_name_map = self._fetch_user_names(dynamic_client, groups)
+                    
+                    # 完全なデータで1回だけ更新
                     if groups:
                         updated_view = create_admin_settings_modal(
                             groups=groups, 
-                            user_name_map={}
+                            user_name_map=user_name_map
                         )
                         
                         try:
@@ -97,11 +102,8 @@ class AdminListener(Listener):
                                 hash=response["view"]["hash"],
                                 view=updated_view
                             )
-                            logger.info(f"グループ情報更新完了: Groups={len(groups)}")
-                            
-                            # 3. さらにユーザー名を取得して更新
-                            self._async_update_modal_with_usernames(
-                                dynamic_client, view_id, team_id, groups
+                            logger.info(
+                                f"モーダル更新完了: Groups={len(groups)}, Users={len(user_name_map)}"
                             )
                         except Exception as e:
                             logger.error(f"モーダル更新失敗: {e}", exc_info=True)
@@ -652,36 +654,6 @@ class AdminListener(Listener):
             logger.info(f"親モーダル更新成功: Groups={len(groups or [])}")
         except Exception as e:
             logger.error(f"親モーダル更新失敗: {e}", exc_info=True)
-    
-    def _async_update_modal_with_usernames(self, client, view_id: str, workspace_id: str, groups: List[Dict]):
-        """
-        モーダルを開いた後、バックグラウンドでユーザー名を取得してモーダルを更新します。
-        
-        Args:
-            client: Slack client
-            view_id: 更新対象のview_id
-            workspace_id: ワークスペースID
-            groups: グループ情報のリスト
-        """
-        try:
-            # ユーザー名を取得
-            user_name_map = self._fetch_user_names(client, groups)
-            
-            if not user_name_map:
-                logger.info("ユーザー名の取得に失敗したため、モーダルの更新をスキップ")
-                return
-            
-            # モーダルを更新
-            view = create_admin_settings_modal(
-                groups=groups, 
-                user_name_map=user_name_map
-            )
-            
-            client.views_update(view_id=view_id, view=view)
-            logger.info(f"モーダルをユーザー名付きで更新完了: {len(user_name_map)}名")
-            
-        except Exception as e:
-            logger.error(f"モーダルの非同期更新失敗: {e}", exc_info=True)
     
     def _fetch_user_names(self, client, groups: List[Dict]) -> Dict[str, str]:
         """
