@@ -51,14 +51,14 @@ class SystemListener(Listener):
         # 1. Botがチャンネルに参加したとき
         # ==========================================
         @app.event("member_joined_channel")
+        @app.event({"type": "message", "subtype": "channel_join"})
         def on_bot_joined_channel(event, ack, body):
             """
             Botがチャンネルに参加したときの処理。
+            Bot自身の参加のみを処理し、他のユーザーの参加は無視します。
            
             過去7日間のメッセージを取得して解析します。
             """
-            # 1. 関数に入ったことを即座にログ出し
-            logger.info(f"!!! EVENT RECEIVED: member_joined_channel !!!")
             ack()
             
             try:
@@ -66,41 +66,35 @@ class SystemListener(Listener):
                 team_id = body.get("team_id") or event.get("team")
                 channel_id = event.get("channel")
                 joined_user_id = event.get("user")
-
-                print(f"!!! DEBUG ID: Team={team_id}, Channel={channel_id}, User={joined_user_id}", flush=True)
-               
-                logger.info(
-                    f"[Bot参加イベント] 検知: Team={team_id}, "
-                    f"Channel={channel_id}, User={joined_user_id}"
-                )
                
                 # team_id に基づいて WebClient を取得
                 dynamic_client = get_slack_client(team_id)
                
                 bot_user_id = dynamic_client.auth_test()["user_id"]
                 
-                logger.info(f"[Bot参加イベント] Bot User ID={bot_user_id}")
+                # Bot自身の参加でない場合は即座にスキップ
+                if joined_user_id != bot_user_id:
+                    logger.debug(
+                        f"[Bot参加イベント] スキップ（他ユーザーの参加）: "
+                        f"User={joined_user_id}, Channel={channel_id}"
+                    )
+                    return
                 
                 # Bot自身の参加のみ処理
-                if joined_user_id == bot_user_id:
-                    logger.info(
-                        f"[Bot参加イベント] ✓ Bot自身の参加を確認: "
-                        f"Channel={channel_id}, Workspace={team_id}"
-                    )
-                    
-                    # Pub/Subに投げる（非同期処理へ）
-                    self.publish_to_worker(
-                        team_id=team_id,
-                        event={
-                            "type": "bot_joined_channel",
-                            "event": event
-                        }
-                    )
-                else:
-                    logger.info(
-                        f"[Bot参加イベント] - スキップ（他ユーザーの参加）: "
-                        f"User={joined_user_id}"
-                    )
+                logger.info(
+                    f"[Bot参加イベント] Bot自身の参加を検知: "
+                    f"Team={team_id}, Channel={channel_id}, Bot User={bot_user_id}"
+                )
+                
+                # Pub/Subに投げる（非同期処理へ）
+                self.publish_to_worker(
+                    team_id=team_id,
+                    event={
+                        "type": "bot_joined_channel",
+                        "event": event
+                    }
+                )
+                
             except Exception as e:
                 logger.error(f"[Bot参加イベント] エラー: {e}", exc_info=True)
         
