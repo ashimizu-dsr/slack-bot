@@ -47,6 +47,8 @@ steps:
       - '--no-cpu-throttling'
       - '--project'
       - '$PROJECT_ID' # 🔧【ここを編集】以前 ${PROJECT_ID} でしたが、$PROJECT_ID が標準です
+      - '--set-env-vars'
+      - 'PUBSUB_TOPIC_ID=slack-kintai-bot'
 
 options:
   logging: 'CLOUD_LOGGING_ONLY'
