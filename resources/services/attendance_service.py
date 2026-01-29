@@ -412,10 +412,15 @@ class AttendanceService:
         try:
             from resources.services.nlp_service import extract_attendance_from_text
             
-            logger.info(f"[過去ログ] AI解析開始: User={user_id}, Text='{text[:30]}...'")
+            logger.info(f"[過去ログ] AI解析開始: User={user_id}, Text='{text[:30]}...', TS={ts}")
             
-            # AI解析実行
-            extraction = extract_attendance_from_text(text, team_id=workspace_id, user_id=user_id)
+            # AI解析実行（過去ログの場合はメッセージのタイムスタンプを渡す）
+            extraction = extract_attendance_from_text(
+                text, 
+                team_id=workspace_id, 
+                user_id=user_id,
+                message_ts=ts
+            )
             
             if not extraction:
                 logger.info(f"[過去ログ] AI解析結果: 勤怠情報なし (User={user_id})")

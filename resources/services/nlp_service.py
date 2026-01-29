@@ -100,7 +100,8 @@ def _format_note(att_data: Dict) -> str:
 def extract_attendance_from_text(
     text: str, 
     team_id: Optional[str] = None, 
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None,
+    message_ts: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """
     テキストから勤怠情報をAIで抽出します。
@@ -109,6 +110,7 @@ def extract_attendance_from_text(
         text: ユーザーが投稿したメッセージ
         team_id: ワークスペースID（コストログ用、オプション）
         user_id: ユーザーID（コストログ用、オプション）
+        message_ts: メッセージのタイムスタンプ（過去ログ処理用、オプション）
         
     Returns:
         抽出結果の辞書:
@@ -125,6 +127,7 @@ def extract_attendance_from_text(
         - OpenAI API (gpt-4o-mini) を使用
         - 打ち消し線 (~text~) は前処理で "(strike-through: text)" に変換
         - 複数日の記録にも対応（_additional_attendances に格納）
+        - message_tsが指定されている場合は、そのタイムスタンプの日付を基準に「明日」などを解釈
     """
     logger.info(f"DEBUG_AI_INPUT: [{text}] (type: {type(text)})")
     api_key = os.getenv("OPENAI_API_KEY")
@@ -138,7 +141,20 @@ def extract_attendance_from_text(
     clean_text = re.sub(r'~(.*?)~', r'(strike-through: \1)', clean_text)
 
     client = OpenAI(api_key=api_key)
-    base_date = datetime.date.today() 
+    
+    # 基準日の決定：message_tsがある場合はそれを基準に、なければ今日
+    if message_ts:
+        try:
+            # Slackのタイムスタンプ（Unix時間）をdatetimeに変換
+            ts_float = float(message_ts)
+            base_datetime = datetime.datetime.fromtimestamp(ts_float)
+            base_date = base_datetime.date()
+            logger.info(f"基準日をメッセージのタイムスタンプから設定: {base_date} (ts={message_ts})")
+        except (ValueError, TypeError) as e:
+            logger.warning(f"message_tsの変換に失敗、今日を基準日とします: {e}")
+            base_date = datetime.date.today()
+    else:
+        base_date = datetime.date.today() 
     
     try:
         # システム指示の定義（最新ルール 2026-01-28: 実例ベース最適化版）
