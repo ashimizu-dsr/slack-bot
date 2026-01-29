@@ -1,19 +1,28 @@
 steps:
-  # 1. コンテナをビルドする（--no-cache を追加して古い中身を破棄）
+  # 1. 前回の最新イメージをキャッシュとしてプルする
+  # 初回やイメージがない場合は失敗するので、|| true でビルドを続行させます
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        docker pull gcr.io/$PROJECT_ID/${_SERVICE_NAME}:latest || true
+
+  # 2. コンテナをビルドする（キャッシュを利用）
   - name: 'gcr.io/cloud-builders/docker'
     args: [
-      'build', 
-      #'--no-cache', # ★ここに追加：キャッシュを一切使わずビルド
-      '-t', 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA', 
+      'build',
+      '--cache-from', 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:latest', # 前回の結果を再利用
+      '-t', 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA',
+      '-t', 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:latest',           # 次回のためにlatestタグも付与
       '.'
     ]
 
-  # 2. ビルドしたイメージを保存する
+  # 3. ビルドしたイメージを保存する（全てのタグをプッシュ）
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA']
+    args: ['push', 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}', '--all-tags']
 
-  # 3. Cloud Run にデプロイする
-# 3. Cloud Run にデプロイする
+  # 4. Cloud Run にデプロイする
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -26,18 +35,18 @@ steps:
       - 'asia-northeast1'
       - '--platform'
       - 'managed'
-      - '--service-account' # サービスアカウントを指定（コンソールで指定しても上手くいかないため。）
+      - '--service-account'
+      # 🔧【ここを編集】作成した「正しいサービスアカウント」のメールアドレスになっているか確認してください
       - 'cloud-build-deployer-for-kinta@slack-kintai-bot-484306.iam.gserviceaccount.com'
       - '--memory'
-      - '1Gi'          # メモリを 1GB に増強
+      - '1Gi'
       - '--cpu'
-      - '1'            # CPU 1個をフルに割り当て（起動を速める）
+      - '1'
       - '--timeout'
-      - '300'          # 起動完了までの待ち時間を 300秒（5分）に延長
-      - '--no-cpu-throttling' # CPUを落とさない
-      - '--project'         # ★念のため、実行中のプロジェクトIDを明示
-      - '${PROJECT_ID}'
-      # ------------------
+      - '300'
+      - '--no-cpu-throttling'
+      - '--project'
+      - '$PROJECT_ID' # 🔧【ここを編集】以前 ${PROJECT_ID} でしたが、$PROJECT_ID が標準です
 
 options:
   logging: 'CLOUD_LOGGING_ONLY'
