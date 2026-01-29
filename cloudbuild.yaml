@@ -26,6 +26,8 @@ steps:
       - 'asia-northeast1'
       - '--platform'
       - 'managed'
+      - '--service-account' # サービスアカウントを指定（コンソールで指定しても上手くいかないため。）
+      - 'cloud-run-deploy@slack-kintai-bot-dev.iam.gserviceaccount.com'
       - '--memory'
       - '1Gi'          # メモリを 1GB に増強
       - '--cpu'
