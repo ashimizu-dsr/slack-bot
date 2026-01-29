@@ -25,7 +25,7 @@ class WorkspaceService:
 
     def __init__(self):
         """ワークスペースサービスの初期化"""
-        self.db = firestore.Client(database=os.getenv("FIRESTORE_DB_ID"))
+        self.db = firestore.Client(database=os.getenv("APP_ENV"))
 
     def get_admin_ids(self, workspace_id: str) -> List[str]:
         """

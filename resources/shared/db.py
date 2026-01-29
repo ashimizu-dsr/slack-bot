@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Firestoreクライアントのグローバルインスタンス
 try:
-    db = firestore.Client(database=os.getenv("FIRESTORE_DB_ID"))
+    db = firestore.Client(database=os.getenv("APP_ENV"))
     logger.info("Firestore client successfully initialized.")
 except Exception as e:
     logger.error(f"Failed to initialize Firestore client: {e}")

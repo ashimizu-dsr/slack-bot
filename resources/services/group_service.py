@@ -27,7 +27,7 @@ class GroupService:
 
     def __init__(self):
         """グループサービスの初期化"""
-        self.db = firestore.Client(database=os.getenv("FIRESTORE_DB_ID"))
+        self.db = firestore.Client(database=os.getenv("APP_ENV"))
 
     def get_all_groups(self, workspace_id: str) -> List[Dict[str, Any]]:
         """

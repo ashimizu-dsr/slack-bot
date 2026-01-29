@@ -320,7 +320,7 @@ class AdminListener(Listener):
                 
                 # グループを削除
                 from google.cloud import firestore
-                db = firestore.Client(database=os.getenv("FIRESTORE_DB_ID"))
+                db = firestore.Client(database=os.getenv("APP_ENV"))
                 group_ref = db.collection(get_collection_name("groups")).document(workspace_id)\
                               .collection(get_collection_name("groups")).document(group_id)
                 group_ref.delete()
