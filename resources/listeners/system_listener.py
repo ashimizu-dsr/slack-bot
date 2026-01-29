@@ -197,12 +197,17 @@ class SystemListener(Listener):
             
             logger.info(f"[過去ログ処理] メッセージ取得完了: 総数={len(all_messages)}件")
             
+            # メッセージを古い順にソート（tsの昇順）
+            # Slack APIは新しい順で返すため、逆順にして古いメッセージから処理する
+            all_messages.sort(key=lambda m: float(m.get("ts", 0)))
+            logger.info(f"[過去ログ処理] メッセージを古い順にソート完了")
+            
             # 各メッセージを解析
             processed_count = 0
             skipped_count = 0
             error_count = 0
             
-            logger.info(f"[過去ログ解析開始] 対象: {len(all_messages)}件のメッセージ")
+            logger.info(f"[過去ログ解析開始] 対象: {len(all_messages)}件のメッセージ（古い順）")
             
             for idx, msg in enumerate(all_messages, 1):
                 user_id = msg.get("user")
