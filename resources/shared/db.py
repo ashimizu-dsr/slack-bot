@@ -5,6 +5,7 @@ Firestore データベース操作モジュール
 全ての関数はworkspace_idを引数に取り、マルチテナント環境に対応しています。
 """
 
+import os
 import datetime
 import logging
 from typing import Optional, List, Dict, Any
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Firestoreクライアントのグローバルインスタンス
 try:
-    db = firestore.Client()
+    db = firestore.Client(database=os.getenv("FIRESTORE_DB_ID"))
     logger.info("Firestore client successfully initialized.")
 except Exception as e:
     logger.error(f"Failed to initialize Firestore client: {e}")

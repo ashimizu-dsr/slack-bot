@@ -5,6 +5,7 @@
 v2.0で追加された機能です。
 """
 
+import os
 import uuid
 import logging
 from typing import List, Dict, Any, Optional
@@ -26,7 +27,7 @@ class GroupService:
 
     def __init__(self):
         """グループサービスの初期化"""
-        self.db = firestore.Client()
+        self.db = firestore.Client(database=os.getenv("FIRESTORE_DB_ID"))
 
     def get_all_groups(self, workspace_id: str) -> List[Dict[str, Any]]:
         """

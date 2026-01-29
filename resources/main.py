@@ -189,7 +189,7 @@ class FirestoreInstallationStore(InstallationStore):
 
 # Firestoreクライアント
 init_db()
-db_client = firestore.Client()
+db_client = firestore.Client(database=os.getenv("FIRESTORE_DB_ID"))
 
 # OAuth設定
 oauth_settings = None

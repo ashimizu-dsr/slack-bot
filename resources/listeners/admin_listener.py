@@ -10,12 +10,13 @@ Pub/Sub対応:
 - handle_sync(): Slackイベントを受け取り、必要に応じてPub/Subに投げる（3秒以内）
 - handle_async(): Pub/Subから戻ってきた後の重い処理
 """
+
 import json
 import logging
 import re
 import datetime
 from typing import List, Dict, Any
-
+import os
 from resources.listeners.Listener import Listener
 from resources.services.group_service import GroupService
 from resources.services.workspace_service import WorkspaceService
@@ -319,7 +320,7 @@ class AdminListener(Listener):
                 
                 # グループを削除
                 from google.cloud import firestore
-                db = firestore.Client()
+                db = firestore.Client(database=os.getenv("FIRESTORE_DB_ID"))
                 group_ref = db.collection(get_collection_name("groups")).document(workspace_id)\
                               .collection(get_collection_name("groups")).document(group_id)
                 group_ref.delete()

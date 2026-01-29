@@ -29,7 +29,7 @@ steps:
       - '--service-account' # サービスアカウントを指定（コンソールで指定しても上手くいかないため。）
       - 'cloud-build-deployer-for-kinta@slack-kintai-bot-484306.iam.gserviceaccount.com'
       - '--set-env-vars'
-      - 'FIRESTORE_DB_ID=${_DB_ID}' # Runの変数
+      - 'FIRESTORE_DB_ID=${APP_ENV}' # DBをdev/prod分離
       - '--memory'
       - '1Gi'          # メモリを 1GB に増強
       - '--cpu'
