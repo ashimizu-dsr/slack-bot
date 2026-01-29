@@ -202,6 +202,9 @@ class AttendanceListener(Listener):
         @app.shortcut("open_kintai_history")
         def on_history_shortcut_triggered(ack, body):
             """グローバルショートカット「勤怠連絡の確認」の処理"""
+            # 最優先: 3秒以内にSlackへ応答
+            ack()
+            
             user_id = body["user"]["id"]
             team_id = body["team"]["id"]
             
@@ -211,26 +214,45 @@ class AttendanceListener(Listener):
                 today = datetime.date.today()
                 month_str = today.strftime("%Y-%m")
                 
-                # 重い処理（1か月分の勤怠データを抽出する）
-                history = self.attendance_service.get_user_history(
-                    workspace_id=team_id,
-                    user_id=user_id, 
-                    month_filter=month_str
-                )
-                
+                # 1. まず空のモーダルを即座に開く
                 view = create_history_modal_view(
-                    history_records=history,
+                    history_records=[],
                     selected_year=str(today.year),
                     selected_month=f"{today.month:02d}",
                     user_id=user_id
                 )
-
-                dynamic_client.views_open(trigger_id=body["trigger_id"], view=view)
-                ack()
                 
-                logger.info(f"履歴表示: User={user_id}, Month={month_str}, Count={len(history)}")
+                response = dynamic_client.views_open(trigger_id=body["trigger_id"], view=view)
+                logger.info(f"履歴モーダル表示: User={user_id}, Month={month_str}")
+                
+                # 2. モーダルを開いた後、データを取得して更新
+                if response["ok"]:
+                    view_id = response["view"]["id"]
+                    
+                    # データ取得（これは3秒以降でもOK）
+                    history = self.attendance_service.get_user_history(
+                        workspace_id=team_id,
+                        user_id=user_id, 
+                        month_filter=month_str
+                    )
+                    
+                    # モーダルを更新
+                    updated_view = create_history_modal_view(
+                        history_records=history,
+                        selected_year=str(today.year),
+                        selected_month=f"{today.month:02d}",
+                        user_id=user_id
+                    )
+                    
+                    dynamic_client.views_update(
+                        view_id=view_id,
+                        hash=response["view"]["hash"],
+                        view=updated_view
+                    )
+                    
+                    logger.info(f"履歴データ更新完了: User={user_id}, Count={len(history)}")
+                
             except Exception as e:
-                ack()
                 logger.error(f"履歴表示失敗: {e}", exc_info=True)
 
         # ==========================================
@@ -240,6 +262,9 @@ class AttendanceListener(Listener):
         @app.action("history_month_change")
         def on_history_filter_changed(ack, body):
             """履歴モーダル内の年月ドロップダウン変更時の処理"""
+            # 最優先: 3秒以内にSlackへ応答
+            ack()
+            
             team_id = body["team"]["id"]
             
             try:
@@ -274,10 +299,8 @@ class AttendanceListener(Listener):
                     view=updated_view
                 )
                 logger.info(f"履歴フィルタ更新: User={target_user_id}, Month={month_filter}, Count={len(history)}")
-                ack()
             except Exception as e:
                 logger.error(f"履歴フィルタ更新失敗: {e}", exc_info=True)
-                ack()
 
     # ======================================================================
     # 非同期処理: Pub/Subから戻ってきた後の重い処理

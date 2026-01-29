@@ -54,41 +54,59 @@ class AdminListener(Listener):
         @app.shortcut("open_member_setup_modal")
         def on_admin_settings_shortcut(ack, body):
             """グローバルショートカット「レポート設定」のハンドラー"""
+            # 最優先: 3秒以内にSlackへ応答
+            ack()
+            
             team_id = body["team"]["id"]
             
             try:
                 dynamic_client = get_slack_client(team_id)
                 group_service = GroupService()
                 
-                # グループ取得（エラー時は初期値）
-                try:
-                    groups = group_service.get_all_groups(team_id)
-                except Exception as e:
-                    logger.error(f"グループ取得失敗: {e}", exc_info=True)
-                    groups = []
-
                 # 1. まず空のuser_name_mapでモーダルを高速に開く
                 view = create_admin_settings_modal(
-                    groups=groups or [], 
+                    groups=[], 
                     user_name_map={}
                 )
                 
                 response = dynamic_client.views_open(trigger_id=body["trigger_id"], view=view)
-                ack()
                 
-                logger.info(
-                    f"レポート設定モーダル表示: Workspace={team_id}, Groups={len(groups or [])}"
-                )
+                logger.info(f"レポート設定モーダル表示: Workspace={team_id}")
                 
-                # 2. モーダルを開いた後、バックグラウンドでユーザー名を取得して更新
-                if response["ok"] and groups:
+                # 2. モーダルを開いた後、バックグラウンドでグループを取得して更新
+                if response["ok"]:
                     view_id = response["view"]["id"]
-                    self._async_update_modal_with_usernames(
-                        dynamic_client, view_id, team_id, groups
-                    )
+                    
+                    # グループ取得（エラー時は初期値）
+                    try:
+                        groups = group_service.get_all_groups(team_id)
+                    except Exception as e:
+                        logger.error(f"グループ取得失敗: {e}", exc_info=True)
+                        groups = []
+                    
+                    # グループ情報でモーダルを更新
+                    if groups:
+                        updated_view = create_admin_settings_modal(
+                            groups=groups, 
+                            user_name_map={}
+                        )
+                        
+                        try:
+                            dynamic_client.views_update(
+                                view_id=view_id,
+                                hash=response["view"]["hash"],
+                                view=updated_view
+                            )
+                            logger.info(f"グループ情報更新完了: Groups={len(groups)}")
+                            
+                            # 3. さらにユーザー名を取得して更新
+                            self._async_update_modal_with_usernames(
+                                dynamic_client, view_id, team_id, groups
+                            )
+                        except Exception as e:
+                            logger.error(f"モーダル更新失敗: {e}", exc_info=True)
                     
             except Exception as e:
-                ack()
                 logger.error(f"レポート設定モーダル表示失敗: {e}", exc_info=True)
 
         # ==========================================
