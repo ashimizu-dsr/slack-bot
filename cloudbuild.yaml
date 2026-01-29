@@ -28,7 +28,6 @@ steps:
       - 'managed'
       - '--service-account' # サービスアカウントを指定（コンソールで指定しても上手くいかないため。）
       - 'cloud-build-deployer-for-kinta@slack-kintai-bot-484306.iam.gserviceaccount.com'
-      - '--set-env-vars'
       - '--memory'
       - '1Gi'          # メモリを 1GB に増強
       - '--cpu'
