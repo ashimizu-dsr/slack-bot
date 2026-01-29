@@ -154,14 +154,22 @@ def extract_attendance_from_text(
             "   - If B is any other status (even if A and B are similar) -> Extract B's status, action='save'\n"
             "   - Examples: '在宅→在宅(早退)' -> Extract '在宅(早退)', action='save'\n"
             "4. DATE EXTRACTION: If date is explicitly written (e.g., '1/23(金)'), use that date. Ignore relative dates like '明日' in this case.\n"
-            "5. AFTERNOON ATTENDANCE: '午後から出社/午後出社' -> status='vacation_am' OR status='other' with note='午後出社予定'\n"
-            "6. VAGUE EXPRESSIONS: If uncertain timing (e.g., '午前は病院。出社したら報告') -> status='other', include all context in note\n"
-            "7. NOTE EXTRACTION:\n"
-            "   - Main reason: Extract core cause concisely (e.g., '最寄り駅運転見合わせのため' not full sentence)\n"
-            "   - Secondary info: Put in parentheses (e.g., '自社都合（昼休憩13:00〜14:00）')\n"
-            "   - Time details: Always include if mentioned (e.g., '16:30早退', '午後出社予定')\n"
-            "8. HEALTH: Format as '体調不良(症状)'\n"
-            "9. CANCELLATION: Only '取消/キャンセル/取り消し/削除' -> action='delete'. '変更' is NOT cancellation.\n\n"
+            "5. LATENESS DETECTION - CRITICAL:\n"
+            "   - '〜後に出社/〜してから出社/終わり次第向かう/向かいます' -> status='late'\n"
+            "   - Time specified (e.g., '10時出社', '十時出社') -> status='late' and MUST include time in note\n"
+            "   - Always extract and preserve time information in note (e.g., '体調不良（10時出社）')\n"
+            "6. SAME DAY MULTIPLE STATUSES - CRITICAL:\n"
+            "   - If ONE day has multiple statuses/events (e.g., '在宅' + '中抜け'), create ONLY ONE record\n"
+            "   - Use status='other' and combine all details in note (e.g., '在宅（11時から1時間中抜け）')\n"
+            "   - NEVER create multiple records for the same date\n"
+            "7. AFTERNOON ATTENDANCE: '午後から出社/午後出社' -> status='vacation_am' OR status='other' with note='午後出社予定'\n"
+            "8. VAGUE EXPRESSIONS: If uncertain timing (e.g., '午前は病院。出社したら報告') -> status='other', include all context in note\n"
+            "9. NOTE EXTRACTION:\n"
+            "   - Main reason: Extract core cause concisely\n"
+            "   - Time details: ALWAYS include if mentioned (e.g., '10時出社', '11時から1時間中抜け')\n"
+            "   - Secondary info: Put in parentheses (e.g., '体調不良（10時出社）', '在宅（昼休憩13:00〜14:00）')\n"
+            "10. HEALTH: Format as '体調不良(症状/時間)'\n"
+            "11. CANCELLATION: Only '取消/キャンセル/取り消し/削除' -> action='delete'. '変更' is NOT cancellation.\n\n"
 
             "STATUS:\n"
             "- vacation/vacation_am/vacation_pm/vacation_hourly: Leave\n"
@@ -276,14 +284,41 @@ def extract_attendance_from_text(
                 "role": "assistant",
                 "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "late_delay", "note": "", "action": "save"}]}'
             },
-            # 例12: 病院後に出社（遅刻）
+            # 例12: 病院後に出社（終わり次第向かう=遅刻）
             {
                 "role": "user",
-                "content": "Today: 2026-01-28 (Tuesday)\nText: 本日体調不良のため、病院行った後に出社致します"
+                "content": "Today: 2026-01-28 (Tuesday)\nText: 子どもの病院に時間がかかっており、終わり次第向かいます。"
             },
             {
                 "role": "assistant",
-                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "late", "note": "体調不良(病院)", "action": "save"}]}'
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "late", "note": "子どもの病院に時間がかかっている", "action": "save"}]}'
+            },
+            # 例13: 時間指定の遅刻（時間を必ず記載）
+            {
+                "role": "user",
+                "content": "Today: 2026-01-28 (Tuesday)\nText: 体調不良の為、10時出社とさせてください。"
+            },
+            {
+                "role": "assistant",
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "late", "note": "体調不良（10時出社）", "action": "save"}]}'
+            },
+            # 例14: 時間指定の遅刻（漢数字）
+            {
+                "role": "user",
+                "content": "Today: 2026-01-28 (Tuesday)\nText: 朝から体調が優れず、十時出社とさせて下さい。"
+            },
+            {
+                "role": "assistant",
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-28", "status": "late", "note": "体調不良（10時出社）", "action": "save"}]}'
+            },
+            # 例15: 同日に複数の情報（在宅+中抜け）
+            {
+                "role": "user",
+                "content": "Today: 2026-01-29 (Wednesday)\nText: 急遽所用のため在宅とさせてください。また11時から1時間程度中抜けします。"
+            },
+            {
+                "role": "assistant",
+                "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-29", "status": "other", "note": "在宅（11時から1時間程度中抜け）", "action": "save"}]}'
             }
         ]
         

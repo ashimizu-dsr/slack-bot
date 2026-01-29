@@ -326,6 +326,12 @@ class AttendanceListener(Listener):
         if event.get("subtype"):
             return False
         
+        # スレッド内のメッセージは除外（thread_tsがあり、それが自分のtsと異なる場合）
+        thread_ts = event.get("thread_ts")
+        if thread_ts and thread_ts != event.get("ts"):
+            logger.info(f"スレッド内メッセージのため処理をスキップ: channel={event.get('channel')}, thread_ts={thread_ts}")
+            return False
+        
         return True
 
     def _handle_message_async(self, team_id: str, event: dict):
