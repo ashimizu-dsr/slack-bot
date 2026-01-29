@@ -525,6 +525,33 @@ class AdminListener(Listener):
                             if name and name.startswith("@"):
                                 name = name[1:]
                             user_name_map[user["id"]] = name
+                
+                # users_listで取得できなかったユーザーを個別に取得
+                missing_user_ids = all_member_ids - set(user_name_map.keys())
+                if missing_user_ids:
+                    logger.info(f"レポート生成: users_listで取得できなかったユーザーを個別取得: {len(missing_user_ids)}名")
+                    for user_id in missing_user_ids:
+                        try:
+                            user_info_response = client.users_info(user=user_id)
+                            if user_info_response["ok"]:
+                                user = user_info_response["user"]
+                                profile = user.get("profile", {})
+                                name = (
+                                    profile.get("display_name") or 
+                                    user.get("real_name") or 
+                                    user.get("name", "")
+                                )
+                                # ＠マークを除去
+                                if name and name.startswith("@"):
+                                    name = name[1:]
+                                user_name_map[user_id] = name
+                            else:
+                                # 取得失敗の場合はユーザーIDをそのまま使用
+                                user_name_map[user_id] = user_id
+                        except Exception as e:
+                            # エラーの場合もユーザーIDをそのまま使用
+                            user_name_map[user_id] = user_id
+                            logger.error(f"レポート生成: ユーザー情報取得例外: {user_id}, エラー: {e}")
             except Exception as e:
                 logger.error(f"ユーザー名取得失敗: {e}", exc_info=True)
             
@@ -704,6 +731,36 @@ class AdminListener(Listener):
                 else:
                     logger.error(f"users_list APIエラー: {response.get('error')}")
                     break
+            
+            # users_listで取得できなかったユーザーを個別に取得
+            # （ゲストユーザー、無効化されたユーザーなどが該当）
+            missing_user_ids = all_user_ids - set(user_name_map.keys())
+            if missing_user_ids:
+                logger.info(f"users_listで取得できなかったユーザーを個別取得: {len(missing_user_ids)}名")
+                for user_id in missing_user_ids:
+                    try:
+                        user_info_response = client.users_info(user=user_id)
+                        if user_info_response["ok"]:
+                            user = user_info_response["user"]
+                            profile = user.get("profile", {})
+                            name = (
+                                profile.get("display_name") or 
+                                user.get("real_name") or 
+                                user.get("name", "")
+                            )
+                            # ＠マークを除去
+                            if name and name.startswith("@"):
+                                name = name[1:]
+                            user_name_map[user_id] = name
+                            logger.debug(f"個別取得成功: {user_id} -> {name}")
+                        else:
+                            # 取得失敗の場合はユーザーIDをそのまま使用
+                            user_name_map[user_id] = user_id
+                            logger.warning(f"ユーザー情報取得失敗: {user_id}, エラー: {user_info_response.get('error')}")
+                    except Exception as e:
+                        # エラーの場合もユーザーIDをそのまま使用
+                        user_name_map[user_id] = user_id
+                        logger.error(f"ユーザー情報取得例外: {user_id}, エラー: {e}")
             
             logger.info(f"ユーザー名取得完了: {len(user_name_map)}名")
             
