@@ -34,6 +34,8 @@ oauth_config:
       - chat:write
       - im:write
       - users:read
+      - channels:read
+      - groups:read
       - commands
       - app_mentions:read
       - im:read
