@@ -131,23 +131,39 @@ class SlackClientWrapper:
         Botが参加しているチャンネルIDの一覧を取得します。
         
         Returns:
-            チャンネルIDの配列
+            チャンネルIDの配列 
             
         Note:
-            公開チャンネルおよびプライベートチャンネルを取得します。
+            users.conversations APIを使用してBotが参加しているチャンネルのみを取得します。
             アーカイブされたチャンネルは除外されます。
         """
         try:
-            response = self.client.conversations_list(
-                types="public_channel,private_channel",
-                exclude_archived=True
-            )
-            joined_channels = [
-                c["id"] for c in response["channels"] 
-                if c.get("is_member", False)
-            ]
-            logger.info(f"Bot参加チャンネル数: {len(joined_channels)}")
-            return joined_channels
+            # users.conversations は Bot が実際に参加しているチャンネルのみを返す
+            channels = []
+            cursor = None
+            
+            while True:
+                response = self.client.users_conversations(
+                    types="public_channel,private_channel",
+                    exclude_archived=True,
+                    limit=200,
+                    cursor=cursor
+                )
+                
+                if not response.get("ok"):
+                    logger.error(f"チャンネル一覧取得エラー: {response.get('error')}")
+                    break
+                
+                channels.extend([c["id"] for c in response.get("channels", [])])
+                
+                # ページネーション処理
+                cursor = response.get("response_metadata", {}).get("next_cursor")
+                if not cursor:
+                    break
+            
+            logger.info(f"Bot参加チャンネル数: {len(channels)}")
+            return channels
+            
         except Exception as e:
             logger.error(f"チャンネル一覧取得失敗: {e}", exc_info=True)
             return []
