@@ -47,6 +47,9 @@ steps:
       - '--no-cpu-throttling'
       - '--project'
       - '$PROJECT_ID' # 🔧【ここを編集】以前 ${PROJECT_ID} でしたが、$PROJECT_ID が標準です
+      # 🔧 環境変数の設定（OAuth マルチテナント対応）
+      - '--update-env-vars'
+      - 'ENABLE_OAUTH=true,APP_ENV=${_APP_ENV}'
 
 options:
   logging: 'CLOUD_LOGGING_ONLY'
