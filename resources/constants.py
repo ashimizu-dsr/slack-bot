@@ -14,7 +14,9 @@ import os
 from dotenv import load_dotenv
 
 # 環境変数の読み込み
-load_dotenv()
+# Cloud Run環境では既存の環境変数を優先し、.envファイルで上書きしない
+# override=Falseにより、既にセットされているAPP_ENVなどが保護される
+load_dotenv(override=False)
 
 # ==========================================
 # 1. 全ワークスペース共通の定数
