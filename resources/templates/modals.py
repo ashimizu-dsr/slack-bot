@@ -222,20 +222,25 @@ def build_delete_confirm_modal(date: str) -> Dict[str, Any]:
 
 
 # ==========================================
-# 4. レポート設定モーダル v2.3（グループごとadmin_ids管理）
+# 4. レポート設定モーダル v2.4（レポート送信先チャンネル設定追加）
 # ==========================================
 def build_admin_settings_modal(
     groups: List[Dict[str, Any]] = None, 
-    user_name_map: Dict[str, str] = None
+    user_name_map: Dict[str, str] = None,
+    channels: List[Dict[str, str]] = None,
+    selected_channel_id: str = None
 ) -> Dict[str, Any]:
     """
-    レポート設定モーダル（一覧表示）を生成します（v2.3）。
+    レポート設定モーダル（一覧表示）を生成します（v2.4）。
     
     各グループに通知先（admin_ids）を個別に設定できる形式です。
+    また、レポート送信先チャンネルを選択できます。
     
     Args:
         groups: グループ情報の配列（admin_idsフィールドを含む）
         user_name_map: ユーザーIDから表示名へのマッピング辞書
+        channels: チャンネル情報の配列 [{"id": "C123", "name": "general"}, ...]
+        selected_channel_id: 現在選択されているチャンネルID
         
     Returns:
         Slack モーダルビューの辞書
@@ -249,7 +254,63 @@ def build_admin_settings_modal(
     # ブロックの構築
     blocks = []
     
+    # 0. レポート送信先チャンネル設定
+    blocks.append({
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": "*📊 レポート送信先チャンネル*"}
+    })
+    
+    if channels and len(channels) > 0:
+        # チャンネル選択肢を作成
+        channel_options = [
+            {
+                "text": {"type": "plain_text", "text": f"#{ch['name']}", "emoji": True},
+                "value": ch["id"]
+            }
+            for ch in channels
+        ]
+        
+        # 初期選択を設定
+        initial_option = None
+        if selected_channel_id:
+            initial_option = next(
+                (opt for opt in channel_options if opt["value"] == selected_channel_id),
+                None
+            )
+        
+        blocks.append({
+            "type": "input",
+            "block_id": "report_channel_block",
+            "element": {
+                "type": "static_select",
+                "action_id": "report_channel_select",
+                "placeholder": {"type": "plain_text", "text": "チャンネルを選択", "emoji": True},
+                "options": channel_options,
+                **({"initial_option": initial_option} if initial_option else {})
+            },
+            "label": {"type": "plain_text", "text": "送信先チャンネル", "emoji": True}
+        })
+        blocks.append({
+            "type": "context",
+            "elements": [{
+                "type": "mrkdwn",
+                "text": "ⓘ 9:00のレポートが送信されるチャンネルを選択してください。Botが参加しているチャンネルのみ表示されます。"
+            }]
+        })
+    else:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "_Botが参加しているチャンネルがありません_"}
+        })
+    
+    blocks.append({"type": "divider"})
+    
     # 1. グループ一覧
+    blocks.append({
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": "*👥 グループ管理*"}
+    })
+    
     if groups:
         for group in groups:
             # 通知先の名前を整形
@@ -322,7 +383,8 @@ def build_admin_settings_modal(
         "type": "modal",
         "callback_id": "admin_settings_modal",
         "title": {"type": "plain_text", "text": "設定", "emoji": True},
-        "close": {"type": "plain_text", "text": "閉じる", "emoji": True},
+        "submit": {"type": "plain_text", "text": "保存", "emoji": True},
+        "close": {"type": "plain_text", "text": "キャンセル", "emoji": True},
         "blocks": blocks
     }
 
@@ -551,10 +613,12 @@ def create_attendance_delete_confirm_modal(date: str) -> Dict[str, Any]:
 def create_admin_settings_modal(
     groups: List[Dict[str, Any]] = None, 
     user_name_map: Dict[str, str] = None,
-    admin_ids: List[str] = None  # 後方互換性のため残すが無視
+    admin_ids: List[str] = None,  # 後方互換性のため残すが無視
+    channels: List[Dict[str, str]] = None,
+    selected_channel_id: str = None
 ) -> Dict[str, Any]:
-    """旧関数名との互換性のため（v2.3では admin_ids は無視）"""
-    return build_admin_settings_modal(groups, user_name_map)
+    """旧関数名との互換性のため（v2.4でチャンネル設定追加）"""
+    return build_admin_settings_modal(groups, user_name_map, channels, selected_channel_id)
 
 
 def create_add_group_modal() -> Dict[str, Any]:

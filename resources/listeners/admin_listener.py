@@ -66,7 +66,9 @@ class AdminListener(Listener):
                 # 1. まず空のモーダルを即座に開く
                 view = create_admin_settings_modal(
                     groups=[], 
-                    user_name_map={}
+                    user_name_map={},
+                    channels=[],
+                    selected_channel_id=None
                 )
                 
                 response = dynamic_client.views_open(trigger_id=body["trigger_id"], view=view)
@@ -84,46 +86,99 @@ class AdminListener(Listener):
                         logger.error(f"グループ取得失敗: {e}", exc_info=True)
                         groups = []
                     
+                    # チャンネル一覧取得
+                    try:
+                        channels_response = dynamic_client.users_conversations(
+                            types="public_channel,private_channel",
+                            exclude_archived=True,
+                            limit=200
+                        )
+                        if channels_response["ok"]:
+                            channels = [
+                                {"id": ch["id"], "name": ch["name"]}
+                                for ch in channels_response["channels"]
+                            ]
+                        else:
+                            logger.error(f"チャンネル一覧取得失敗: {channels_response.get('error')}")
+                            channels = []
+                    except Exception as e:
+                        logger.error(f"チャンネル一覧取得エラー: {e}", exc_info=True)
+                        channels = []
+                    
+                    # 現在のレポート送信先チャンネルを取得
+                    from resources.shared.db import get_workspace_config
+                    workspace_config = get_workspace_config(team_id)
+                    selected_channel_id = workspace_config.get("report_channel_id") if workspace_config else None
+                    
                     # ユーザー名も一緒に取得
                     user_name_map = {}
                     if groups:
                         user_name_map = self._fetch_user_names(dynamic_client, groups)
                     
                     # 完全なデータで1回だけ更新
-                    if groups:
-                        updated_view = create_admin_settings_modal(
-                            groups=groups, 
-                            user_name_map=user_name_map
+                    updated_view = create_admin_settings_modal(
+                        groups=groups, 
+                        user_name_map=user_name_map,
+                        channels=channels,
+                        selected_channel_id=selected_channel_id
+                    )
+                    
+                    try:
+                        dynamic_client.views_update(
+                            view_id=view_id,
+                            hash=response["view"]["hash"],
+                            view=updated_view
                         )
-                        
-                        try:
-                            dynamic_client.views_update(
-                                view_id=view_id,
-                                hash=response["view"]["hash"],
-                                view=updated_view
-                            )
-                            logger.info(
-                                f"モーダル更新完了: Groups={len(groups)}, Users={len(user_name_map)}"
-                            )
-                        except Exception as e:
-                            logger.error(f"モーダル更新失敗: {e}", exc_info=True)
+                        logger.info(
+                            f"モーダル更新完了: Groups={len(groups)}, Users={len(user_name_map)}, Channels={len(channels)}"
+                        )
+                    except Exception as e:
+                        logger.error(f"モーダル更新失敗: {e}", exc_info=True)
                     
             except Exception as e:
                 logger.error(f"レポート設定モーダル表示失敗: {e}", exc_info=True)
 
         # ==========================================
-        # 2. レポート設定モーダル「保存」押下（v2.3では何もしない）
+        # 2. レポート設定モーダル「保存」押下（v2.4でチャンネル設定保存を追加）
         # ==========================================
         @app.view("admin_settings_modal")
         def on_admin_settings_submitted(ack, body, view):
             """
             レポート設定モーダル（一覧）の「保存」ボタン押下時の処理。
             
-            v2.3では、admin_idsはグループごとに保存されるため、
-            このモーダルでは何も保存しません。
+            v2.4では、レポート送信先チャンネルを保存します。
             """
-            ack()
-            logger.info("レポート設定モーダル閉じる（v2.3では何も保存しない）")
+            workspace_id = body["team"]["id"]
+            
+            try:
+                # チャンネル選択を取得
+                vals = view["state"]["values"]
+                
+                report_channel_id = None
+                if "report_channel_block" in vals:
+                    selected_option = vals["report_channel_block"]["report_channel_select"].get("selected_option")
+                    if selected_option:
+                        report_channel_id = selected_option["value"]
+                
+                # Firestoreの workspaces コレクションに保存
+                from resources.shared.db import get_workspace_config
+                from google.cloud import firestore
+                import os
+                
+                db = firestore.Client(database=os.getenv("APP_ENV"))
+                workspace_ref = db.collection(get_collection_name("workspaces")).document(workspace_id)
+                
+                # 既存の設定を取得して更新
+                workspace_ref.set({
+                    "report_channel_id": report_channel_id or ""
+                }, merge=True)
+                
+                logger.info(f"レポート送信先チャンネル保存: Workspace={workspace_id}, Channel={report_channel_id}")
+                ack()
+                
+            except Exception as e:
+                logger.error(f"レポート送信先チャンネル保存失敗: {e}", exc_info=True)
+                ack()
 
         # ==========================================
         # 3. 「追加」ボタン押下
@@ -667,18 +722,44 @@ class AdminListener(Listener):
                 logger.error(f"グループ取得失敗（更新時）: {e}", exc_info=True)
                 groups = []
             
+            # チャンネル一覧取得
+            try:
+                channels_response = client.users_conversations(
+                    types="public_channel,private_channel",
+                    exclude_archived=True,
+                    limit=200
+                )
+                if channels_response["ok"]:
+                    channels = [
+                        {"id": ch["id"], "name": ch["name"]}
+                        for ch in channels_response["channels"]
+                    ]
+                else:
+                    logger.error(f"チャンネル一覧取得失敗: {channels_response.get('error')}")
+                    channels = []
+            except Exception as e:
+                logger.error(f"チャンネル一覧取得エラー: {e}", exc_info=True)
+                channels = []
+            
+            # 現在のレポート送信先チャンネルを取得
+            from resources.shared.db import get_workspace_config
+            workspace_config = get_workspace_config(workspace_id)
+            selected_channel_id = workspace_config.get("report_channel_id") if workspace_config else None
+            
             # キャンセルで戻る時は、時間的余裕があるのでユーザー名を取得
             user_name_map = self._fetch_user_names(client, groups)
 
             # モーダルを再生成（データが空でもOK）
             view = create_admin_settings_modal(
                 groups=groups or [], 
-                user_name_map=user_name_map
+                user_name_map=user_name_map,
+                channels=channels,
+                selected_channel_id=selected_channel_id
             )
             
             # 更新
             client.views_update(view_id=view_id, view=view)
-            logger.info(f"親モーダル更新成功: Groups={len(groups or [])}")
+            logger.info(f"親モーダル更新成功: Groups={len(groups or [])}, Channels={len(channels)}")
         except Exception as e:
             logger.error(f"親モーダル更新失敗: {e}", exc_info=True)
     
