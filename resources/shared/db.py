@@ -11,7 +11,7 @@ import logging
 from typing import Optional, List, Dict, Any
 from google.cloud import firestore
 
-from resources.constants import get_collection_name
+from resources.constants import get_collection_name, APP_ENV
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +20,9 @@ try:
     # APP_ENVに基づいて接続先データベースを決定
     # production環境 → "production" データベース
     # develop環境 → "develop" データベース
-    db_name = os.getenv("APP_ENV", "develop")
-    db = firestore.Client(database=db_name)
-    logger.info(f"Firestore client successfully initialized with database: {db_name}")
+    # constants.pyで環境変数のロードと取得が行われているため、そこから参照する
+    db = firestore.Client(database=APP_ENV)
+    logger.info(f"Firestore client successfully initialized with database: {APP_ENV}")
 except Exception as e:
     logger.error(f"Failed to initialize Firestore client: {e}")
     raise
