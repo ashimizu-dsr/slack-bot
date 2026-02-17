@@ -251,7 +251,29 @@ ENABLE_OAUTH=true
 
 # OpenAI API
 OPENAI_API_KEY=sk-your-openai-api-key
+
+# アプリケーション環境（production または develop）
+# 注意: この環境変数は Cloud Run で手動設定してください
+APP_ENV=production  # 本番環境の場合
+# APP_ENV=develop   # 開発環境の場合
 ```
+
+**重要**: `APP_ENV`は各Cloud Runサービスで**個別に手動設定**してください。
+`cloudbuild.yaml`では設定されないため、以下のコマンドで設定する必要があります：
+
+```bash
+# 本番環境（slack-kintai-bot-prod）の場合
+gcloud run services update slack-kintai-bot-prod \
+  --region=asia-northeast1 \
+  --set-env-vars APP_ENV=production
+
+# 開発環境（slack-kintai-bot-dev）の場合
+gcloud run services update slack-kintai-bot-dev \
+  --region=asia-northeast1 \
+  --set-env-vars APP_ENV=develop
+```
+
+これにより、本番環境は`production`データベース、開発環境は`develop`データベースに接続します。
 
 #### オプション
 

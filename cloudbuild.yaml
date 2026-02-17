@@ -48,8 +48,9 @@ steps:
       - '--project'
       - '$PROJECT_ID' # 🔧【ここを編集】以前 ${PROJECT_ID} でしたが、$PROJECT_ID が標準です
       # 🔧 環境変数の設定（OAuth マルチテナント対応）
+      # 注意: APP_ENVは各Cloud Runサービスで手動設定するため、ここでは設定しない
       - '--update-env-vars'
-      - 'ENABLE_OAUTH=true,APP_ENV=${_APP_ENV}'
+      - 'ENABLE_OAUTH=true'
 
 options:
   logging: 'CLOUD_LOGGING_ONLY'
