@@ -89,7 +89,7 @@ class AdminListener(Listener):
                     # チャンネル一覧取得
                     try:
                         channels_response = dynamic_client.users_conversations(
-                            types="public_channel,private_channel",
+                            types="public_channel", # private_channelは除外
                             exclude_archived=True,
                             limit=200
                         )
@@ -728,7 +728,7 @@ class AdminListener(Listener):
             # チャンネル一覧取得
             try:
                 channels_response = client.users_conversations(
-                    types="public_channel,private_channel",
+                    types="public_channel", # private_channelは除外
                     exclude_archived=True,
                     limit=200
                 )
