@@ -144,7 +144,7 @@ class SlackClientWrapper:
             
             while True:
                 response = self.client.users_conversations(
-                    types="public_channel,private_channel",
+                    types="public_channel", # private_channelは除外
                     exclude_archived=True,
                     limit=200,
                     cursor=cursor
