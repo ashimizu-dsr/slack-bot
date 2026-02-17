@@ -144,11 +144,14 @@ class SlackClientWrapper:
             
             while True:
                 response = self.client.users_conversations(
-                    types="public_channel,private_channel",
+                    types="public_channel", # private_channelは除外
                     exclude_archived=True,
                     limit=200,
                     cursor=cursor
                 )
+
+                # ログ
+                print(f"DEBUG: 取得できたチャンネル一覧: {[c['name'] for c in response['channels']]}")
                 
                 if not response.get("ok"):
                     logger.error(f"チャンネル一覧取得エラー: {response.get('error')}")

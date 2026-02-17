@@ -75,11 +75,11 @@ STATUS_TRANSLATION = {
 # AI判定用の逆引き・エイリアス定義（追加）
 # ここに「AIに紐づけさせたい言葉」を列挙します
 STATUS_AI_ALIASES = {
-    "vacation_am": ["vacation_am", "am休", "午前休", "午前半休", "午前"],
-    "vacation_pm": ["vacation_pm", "pm休", "午後休", "午後半休", "午後"],
-    "vacation_hourly": ["vacation_hourly", "時間休", "時休"],
+    "vacation_am": ["vacation_am", "am休", "午前休", "午前半休", "午前","AM休"],
+    "vacation_pm": ["vacation_pm", "pm休", "午後休", "午後半休", "午後","PM休"],
+    "vacation_hourly": ["vacation_hourly", "時間休", ],
     "vacation": ["vacation", "休暇", "休み", "全休", "有給"],
-    "late_delay": ["late_delay", "電車遅延", "遅延", "交通乱れ"],
+    "late_delay": ["late_delay", "電車遅延", "遅延",],
     "late": ["late", "遅刻"],
     "out": ["out", "外出", "直行", "直帰", "情報センター", "楽天損保"],
     "shift": ["shift", "シフト", "交代勤務", "シフト勤務"],
