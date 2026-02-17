@@ -24,7 +24,10 @@ class WorkspaceService:
 
     def __init__(self):
         """ワークスペースサービスの初期化"""
-        self.db = firestore.Client(database=APP_ENV)
+        # 空文字列チェック
+        db_name = APP_ENV.strip() if APP_ENV and APP_ENV.strip() else "develop"
+        self.db = firestore.Client(database=db_name)
+        logger.info(f"WorkspaceService initialized with database: {db_name}")
 
     def get_admin_ids(self, workspace_id: str) -> List[str]:
         """

@@ -197,8 +197,15 @@ init_db()
 # constants.pyでAPP_ENVが適切に設定されているので、それを使用
 from resources.constants import APP_ENV
 logger.info(f"[INIT] APP_ENV value: '{APP_ENV}'")
-db_client = firestore.Client(database=APP_ENV)
-logger.info(f"[INIT] Main Firestore client initialized with database: {APP_ENV}")
+
+# 空文字列チェック（Firestoreは空文字列を"(default)"として扱う）
+if not APP_ENV or not APP_ENV.strip():
+    logger.error(f"APP_ENV is empty! Using 'develop' as fallback. APP_ENV='{APP_ENV}'")
+    db_client = firestore.Client(database="develop")
+    logger.info(f"[INIT] Main Firestore client initialized with database: develop (fallback)")
+else:
+    db_client = firestore.Client(database=APP_ENV)
+    logger.info(f"[INIT] Main Firestore client initialized with database: {APP_ENV}")
 
 # OAuth設定
 oauth_settings = None

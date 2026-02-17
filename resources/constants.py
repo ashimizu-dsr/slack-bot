@@ -36,10 +36,13 @@ else:
 # ==========================================
 
 # アプリケーション環境（production / develop）
-APP_ENV = os.environ.get("APP_ENV", "develop")
+APP_ENV_RAW = os.environ.get("APP_ENV", "develop")
+# 空文字列の場合もデフォルト値を使用
+APP_ENV = APP_ENV_RAW.strip() if APP_ENV_RAW and APP_ENV_RAW.strip() else "develop"
 
 # デバッグログ：APP_ENVの値を確認
-logger.info(f"[constants.py] APP_ENV loaded: '{APP_ENV}' (from {'env var' if 'APP_ENV' in os.environ else 'default'})")
+logger.info(f"[constants.py] APP_ENV_RAW: '{APP_ENV_RAW}' (from {'env var' if 'APP_ENV' in os.environ else 'default'})")
+logger.info(f"[constants.py] APP_ENV loaded: '{APP_ENV}'")
 logger.info(f"[constants.py] is_cloud_run: {is_cloud_run}, K_SERVICE: {os.environ.get('K_SERVICE', 'not set')}")
 
 

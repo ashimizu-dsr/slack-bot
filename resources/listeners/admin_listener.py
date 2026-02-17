@@ -164,7 +164,9 @@ class AdminListener(Listener):
                 from resources.shared.db import get_workspace_config
                 from google.cloud import firestore
                 
-                db = firestore.Client(database=APP_ENV)
+                # 空文字列チェック
+                db_name = APP_ENV.strip() if APP_ENV and APP_ENV.strip() else "develop"
+                db = firestore.Client(database=db_name)
                 workspace_ref = db.collection(get_collection_name("workspaces")).document(workspace_id)
                 
                 # 既存の設定を取得して更新
@@ -394,7 +396,9 @@ class AdminListener(Listener):
                 
                 # グループを削除
                 from google.cloud import firestore
-                db = firestore.Client(database=APP_ENV)
+                # 空文字列チェック
+                db_name = APP_ENV.strip() if APP_ENV and APP_ENV.strip() else "develop"
+                db = firestore.Client(database=db_name)
                 group_ref = db.collection(get_collection_name("groups")).document(workspace_id)\
                               .collection(get_collection_name("groups")).document(group_id)
                 group_ref.delete()

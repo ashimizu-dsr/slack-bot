@@ -21,7 +21,14 @@ try:
     # production環境 → "production" データベース
     # develop環境 → "develop" データベース
     # constants.pyで環境変数のロードと取得が行われているため、そこから参照する
-    db = firestore.Client(database=APP_ENV)
+    
+    # 空文字列チェック（Firestoreは空文字列を"(default)"として扱う）
+    if not APP_ENV or not APP_ENV.strip():
+        logger.error(f"APP_ENV is empty! Using 'develop' as fallback. APP_ENV='{APP_ENV}'")
+        db = firestore.Client(database="develop")
+    else:
+        db = firestore.Client(database=APP_ENV)
+    
     logger.info(f"Firestore client successfully initialized with database: {APP_ENV}")
 except Exception as e:
     logger.error(f"Failed to initialize Firestore client: {e}")

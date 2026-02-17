@@ -26,7 +26,10 @@ class GroupService:
 
     def __init__(self):
         """グループサービスの初期化"""
-        self.db = firestore.Client(database=APP_ENV)
+        # 空文字列チェック
+        db_name = APP_ENV.strip() if APP_ENV and APP_ENV.strip() else "develop"
+        self.db = firestore.Client(database=db_name)
+        logger.info(f"GroupService initialized with database: {db_name}")
 
     def get_all_groups(self, workspace_id: str) -> List[Dict[str, Any]]:
         """
