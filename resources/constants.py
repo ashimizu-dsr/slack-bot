@@ -18,18 +18,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # 環境変数の読み込み
-# Cloud Run環境では環境変数が直接設定されるため、.envファイルは読み込まない
-# ローカル開発環境のみ.envファイルを使用する
-# 判定方法：Cloud RunではK_SERVICE環境変数が設定される
-is_cloud_run = os.environ.get("K_SERVICE") is not None
-
-if not is_cloud_run:
-    # ローカル開発環境：.envファイルから環境変数を読み込む
+# 既にAPP_ENVが設定されていれば.envファイルは読み込まない
+# この判定により、本番環境で設定した環境変数が.envファイルで上書きされることを防ぐ
+if "APP_ENV" not in os.environ:
+    # APP_ENVが未設定の場合のみ.envファイルを読み込む（ローカル開発用）
     from dotenv import load_dotenv
     load_dotenv(override=False)
-    logger.info("[constants.py] Running in local environment, loaded .env file")
+    logger.info("[constants.py] APP_ENV not found in OS environment, loaded .env file")
 else:
-    logger.info("[constants.py] Running in Cloud Run, using environment variables directly")
+    logger.info("[constants.py] APP_ENV found in OS environment, skipping .env file")
 
 # ==========================================
 # 1. 全ワークスペース共通の定数
@@ -43,7 +40,6 @@ APP_ENV = APP_ENV_RAW.strip() if APP_ENV_RAW and APP_ENV_RAW.strip() else "devel
 # デバッグログ：APP_ENVの値を確認
 logger.info(f"[constants.py] APP_ENV_RAW: '{APP_ENV_RAW}' (from {'env var' if 'APP_ENV' in os.environ else 'default'})")
 logger.info(f"[constants.py] APP_ENV loaded: '{APP_ENV}'")
-logger.info(f"[constants.py] is_cloud_run: {is_cloud_run}, K_SERVICE: {os.environ.get('K_SERVICE', 'not set')}")
 
 
 def get_collection_name(base_name: str) -> str:
