@@ -11,8 +11,11 @@
 """
 
 import os
-from dotenv import load_dotenv
 import logging
+
+# ロギング設定（最優先で実行）
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # 環境変数の読み込み
 # Cloud Run環境では環境変数が直接設定されるため、.envファイルは読み込まない
@@ -22,10 +25,11 @@ is_cloud_run = os.environ.get("K_SERVICE") is not None
 
 if not is_cloud_run:
     # ローカル開発環境：.envファイルから環境変数を読み込む
+    from dotenv import load_dotenv
     load_dotenv(override=False)
-    print("[constants.py] Running in local environment, loaded .env file")
+    logger.info("[constants.py] Running in local environment, loaded .env file")
 else:
-    print("[constants.py] Running in Cloud Run, using environment variables directly")
+    logger.info("[constants.py] Running in Cloud Run, using environment variables directly")
 
 # ==========================================
 # 1. 全ワークスペース共通の定数
@@ -35,7 +39,6 @@ else:
 APP_ENV = os.environ.get("APP_ENV", "develop")
 
 # デバッグログ：APP_ENVの値を確認
-logger = logging.getLogger(__name__)
 logger.info(f"[constants.py] APP_ENV loaded: '{APP_ENV}' (from {'env var' if 'APP_ENV' in os.environ else 'default'})")
 logger.info(f"[constants.py] is_cloud_run: {is_cloud_run}, K_SERVICE: {os.environ.get('K_SERVICE', 'not set')}")
 

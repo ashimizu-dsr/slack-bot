@@ -118,9 +118,9 @@ class FirestoreInstallationStore(InstallationStore):
                 "updated_at": firestore.SERVER_TIMESTAMP
             }
             
-            # デバッグログ：どのデータベース・コレクションに保存しているか明示
-            logger.info(f"[OAuth Save] Database: {self.db._database_string}, Collection: {collection_name}, team_id: {team_id}")
-            logger.info(f"[OAuth Save] bot_token (first 20 chars): {installation.bot_token[:20] if installation.bot_token else 'None'}...")
+            # デバッグログ：どのコレクションに保存しているか明示
+            logger.info(f"[OAuth Save] Collection: {collection_name}, team_id: {team_id}")
+            logger.info(f"[OAuth Save] bot_token prefix: {installation.bot_token[:20] if installation.bot_token else 'None'}...")
             
             self.db.collection(collection_name).document(team_id).set(data, merge=True)
             logger.info(f"Installation saved to Firestore: team_id={team_id}, team_name={installation.team_name}")
@@ -199,7 +199,6 @@ from resources.constants import APP_ENV
 logger.info(f"[INIT] APP_ENV value: '{APP_ENV}'")
 db_client = firestore.Client(database=APP_ENV)
 logger.info(f"[INIT] Main Firestore client initialized with database: {APP_ENV}")
-logger.info(f"[INIT] Database string: {db_client._database_string}")
 
 # OAuth設定
 oauth_settings = None
