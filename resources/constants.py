@@ -12,6 +12,7 @@
 
 import os
 from dotenv import load_dotenv
+import logging
 
 # 環境変数の読み込み
 # Cloud Run環境では既存の環境変数を優先し、.envファイルで上書きしない
@@ -24,6 +25,10 @@ load_dotenv(override=False)
 
 # アプリケーション環境（production / develop）
 APP_ENV = os.environ.get("APP_ENV", "develop")
+
+# デバッグログ：APP_ENVの値を確認
+logger = logging.getLogger(__name__)
+logger.info(f"[constants.py] APP_ENV loaded: '{APP_ENV}' (from {'env var' if 'APP_ENV' in os.environ else 'default'})")
 
 
 def get_collection_name(base_name: str) -> str:
