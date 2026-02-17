@@ -4,13 +4,12 @@
 このモジュールは、ワークスペース全体の設定（管理者など）を管理します。
 v2.0で追加された機能です。
 """
-import os
 import logging
 from typing import List, Dict, Any
 from google.cloud import firestore
 
 from resources.shared.errors import ValidationError
-from resources.constants import get_collection_name
+from resources.constants import get_collection_name, APP_ENV
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +24,7 @@ class WorkspaceService:
 
     def __init__(self):
         """ワークスペースサービスの初期化"""
-        self.db = firestore.Client(database=os.getenv("APP_ENV"))
+        self.db = firestore.Client(database=APP_ENV)
 
     def get_admin_ids(self, workspace_id: str) -> List[str]:
         """

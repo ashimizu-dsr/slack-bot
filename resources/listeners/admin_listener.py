@@ -22,7 +22,7 @@ from resources.services.group_service import GroupService
 from resources.services.workspace_service import WorkspaceService
 from resources.templates.modals import create_admin_settings_modal
 from resources.clients.slack_client import get_slack_client
-from resources.constants import get_collection_name
+from resources.constants import get_collection_name, APP_ENV
 
 logger = logging.getLogger(__name__)
 
@@ -163,9 +163,8 @@ class AdminListener(Listener):
                 # Firestoreの workspaces コレクションに保存
                 from resources.shared.db import get_workspace_config
                 from google.cloud import firestore
-                import os
                 
-                db = firestore.Client(database=os.getenv("APP_ENV"))
+                db = firestore.Client(database=APP_ENV)
                 workspace_ref = db.collection(get_collection_name("workspaces")).document(workspace_id)
                 
                 # 既存の設定を取得して更新
@@ -395,7 +394,7 @@ class AdminListener(Listener):
                 
                 # グループを削除
                 from google.cloud import firestore
-                db = firestore.Client(database=os.getenv("APP_ENV"))
+                db = firestore.Client(database=APP_ENV)
                 group_ref = db.collection(get_collection_name("groups")).document(workspace_id)\
                               .collection(get_collection_name("groups")).document(group_id)
                 group_ref.delete()

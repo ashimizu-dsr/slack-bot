@@ -5,14 +5,13 @@
 v2.0で追加された機能です。
 """
 
-import os
 import uuid
 import logging
 from typing import List, Dict, Any, Optional
 from google.cloud import firestore
 
 from resources.shared.errors import ValidationError
-from resources.constants import get_collection_name
+from resources.constants import get_collection_name, APP_ENV
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +26,7 @@ class GroupService:
 
     def __init__(self):
         """グループサービスの初期化"""
-        self.db = firestore.Client(database=os.getenv("APP_ENV"))
+        self.db = firestore.Client(database=APP_ENV)
 
     def get_all_groups(self, workspace_id: str) -> List[Dict[str, Any]]:
         """
