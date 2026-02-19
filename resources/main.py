@@ -112,39 +112,56 @@ class FirestoreInstallationStore(InstallationStore):
             installation: slack_bolt.oauth.installation_store.Installation オブジェクト
         """
         # ── ドメインチェック（ALLOWED_DOMAIN が設定されている場合のみ） ──
-        allowed_domain = os.environ.get("ALLOWED_DOMAIN", "").strip()
+        allowed_domain_raw = os.environ.get("ALLOWED_DOMAIN", "")
+        allowed_domain = allowed_domain_raw.strip()
+        logger.info(
+            f"[DomainCheck] ALLOWED_DOMAIN raw='{allowed_domain_raw}', "
+            f"stripped='{allowed_domain}', "
+            f"user_id='{installation.user_id}', "
+            f"team_id='{installation.team_id}'"
+        )
         if allowed_domain:
             try:
                 check_client = WebClient(token=installation.bot_token)
-                user_info = check_client.users_info(user=installation.user_id)
+                user_info_resp = check_client.users_info(user=installation.user_id)
+                logger.info(
+                    f"[DomainCheck] users_info ok={user_info_resp.get('ok')}, "
+                    f"user_id={installation.user_id}"
+                )
                 email: str = (
-                    user_info.get("user", {})
+                    user_info_resp.get("user", {})
                     .get("profile", {})
                     .get("email", "")
                 )
                 if not email:
+                    # メールが取得できない場合はチェックをスキップしてインストールを許可する。
+                    # （OAuth プロセス中はメールが返らないケースがある）
                     logger.warning(
-                        f"[DomainCheck] Could not retrieve email: user={installation.user_id}"
+                        f"[DomainCheck] Email not available for user={installation.user_id}. "
+                        f"Skipping domain check and allowing installation."
                     )
-                    raise DomainNotAllowedError(
-                        f"Email not available for user={installation.user_id}",
-                        user_message="メールアドレスを取得できなかったため、インストールを拒否しました。"
-                    )
-                domain = email.split("@")[-1].lower()
-                if domain != allowed_domain.lower():
-                    logger.warning(
-                        f"[DomainCheck] Domain mismatch: email={email}, allowed={allowed_domain}"
-                    )
-                    raise DomainNotAllowedError(
-                        f"Domain '{domain}' not allowed (allowed='{allowed_domain}')",
-                        user_message=f"ドメイン '{domain}' はインストールが許可されていません。"
-                    )
-                logger.info(f"[DomainCheck] Domain OK: {domain}")
+                else:
+                    domain = email.split("@")[-1].lower()
+                    logger.info(f"[DomainCheck] email={email}, domain={domain}, allowed={allowed_domain}")
+                    if domain != allowed_domain.lower():
+                        logger.warning(
+                            f"[DomainCheck] Domain mismatch: domain='{domain}', allowed='{allowed_domain}'"
+                        )
+                        raise DomainNotAllowedError(
+                            f"Domain '{domain}' not allowed (allowed='{allowed_domain}')",
+                            user_message=f"ドメイン '{domain}' はインストールが許可されていません。"
+                        )
+                    logger.info(f"[DomainCheck] Domain OK: {domain}")
             except DomainNotAllowedError:
                 raise  # custom_failure_handler で捕捉させる
             except Exception as e:
-                logger.error(f"[DomainCheck] Unexpected error: {e}", exc_info=True)
-                raise
+                # users_info 呼び出しで予期しないエラーが発生した場合はスキップして続行する。
+                # （インストール自体をブロックしないための安全策）
+                logger.error(
+                    f"[DomainCheck] Unexpected error during users_info: {e}. "
+                    f"Skipping domain check and allowing installation.",
+                    exc_info=True
+                )
 
         try:
             team_id = installation.team_id
@@ -316,16 +333,20 @@ if enable_oauth:
                 client_id=client_id,
                 client_secret=client_secret,
                 scopes=[
-                    "app_mentions:read",
-                    "channels:history",
-                    "channels:read",
-                    "chat:write",
-                    "commands",
-                    "users:read",
-                    "users:read.email",
                     "reactions:write",
+                    "chat:write",
+                    "im:write",
+                    "users:read",
+                    "channels:read",
+                    "groups:read",
+                    "commands",
+                    "app_mentions:read",
+                    "im:read",
                     "im:history",
-                    "groups:history"
+                    "channels:history",
+                    "groups:history",
+                    "users:read.email",
+                    "mpim:read",
                 ],
                 installation_store=FirestoreInstallationStore(db_client),
                 # state_store を指定しない → デフォルトの CookieStateStore を使用
