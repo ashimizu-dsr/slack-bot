@@ -11,7 +11,7 @@ import logging
 from typing import Optional, List, Dict, Any
 from google.cloud import firestore
 
-from resources.constants import get_collection_name, APP_ENV
+from resources.constants import get_collection_name, APP_ENV, DB_ENV
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +23,8 @@ try:
     # constants.pyで環境変数のロードと取得が行われているため、そこから参照する
     
     # 空文字列チェック（Firestoreは空文字列を"(default)"として扱う）
-    if not APP_ENV or not APP_ENV.strip():
-        logger.error(f"APP_ENV is empty! Using 'develop' as fallback. APP_ENV='{APP_ENV}'")
-        db = firestore.Client(database="develop")
-    else:
-        db = firestore.Client(database=APP_ENV)
-    
-    logger.info(f"Firestore client successfully initialized with database: {APP_ENV}")
+    db = firestore.Client(database=DB_ENV)
+    logger.info(f"Firestore client successfully initialized with database: {DB_ENV} (APP_ENV='{APP_ENV}')")
 except Exception as e:
     logger.error(f"Failed to initialize Firestore client: {e}")
     raise

@@ -333,31 +333,22 @@ if enable_oauth:
                 client_id=client_id,
                 client_secret=client_secret,
                 scopes=[
-                    "reactions:write",
-                    "chat:write",
-                    "im:write",
-                    "users:read",
-                    "channels:read",
-                    "groups:read",
-                    "commands",
-                    "app_mentions:read",
-                    "im:read",
-                    "im:history",
-                    "channels:history",
-                    "groups:history",
-                    "users:read.email",
-                    "mpim:read",
+                    "reactions:write", "chat:write", "im:write", "users:read",
+                    "channels:read", "groups:read", "commands", "app_mentions:read",
+                    "im:read", "im:history", "channels:history", "groups:history",
+                    "users:read.email", "mpim:read",
                 ],
                 installation_store=FirestoreInstallationStore(db_client),
-                # state_store を指定しない → デフォルトの CookieStateStore を使用
                 callback_options=CallbackOptions(failure=custom_failure_handler)
             )
-            logger.info("OAuth settings configured successfully")
+            logger.info("✅ OAuth settings configured successfully")
         except Exception as e:
-            logger.error(f"Failed to configure OAuth: {e}", exc_info=True)
-            oauth_settings = None
+            # 【重要】Noneにするのではなく、エラーをそのまま投げる！
+            # これで Cloud Run のログに「何が原因で失敗したか」が絶対に出ます
+            logger.error(f"❌ CRITICAL OAUTH ERROR: {e}", exc_info=True)
+            raise e 
     else:
-        logger.warning("SLACK_CLIENT_ID or SLACK_CLIENT_SECRET not set, OAuth disabled")
+        logger.warning("⚠️ SLACK_CLIENT_ID or SLACK_CLIENT_SECRET not set")
 
 # Slack Appの初期化
 if oauth_settings:

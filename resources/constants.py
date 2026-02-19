@@ -37,9 +37,20 @@ APP_ENV_RAW = os.environ.get("APP_ENV", "develop")
 # 空文字列の場合もデフォルト値を使用
 APP_ENV = APP_ENV_RAW.strip() if APP_ENV_RAW and APP_ENV_RAW.strip() else "develop"
 
+# APP_ENVの短縮値をFirestoreデータベース名にマッピング
+# dev / develop → "develop" データベース
+# prod / production → "production" データベース
+_ENV_DB_MAP = {
+    "dev": "develop",
+    "develop": "develop",
+    "prod": "production",
+    "production": "production",
+}
+DB_ENV = _ENV_DB_MAP.get(APP_ENV, "develop")
+
 # デバッグログ：APP_ENVの値を確認
 logger.info(f"[constants.py] APP_ENV_RAW: '{APP_ENV_RAW}' (from {'env var' if 'APP_ENV' in os.environ else 'default'})")
-logger.info(f"[constants.py] APP_ENV loaded: '{APP_ENV}'")
+logger.info(f"[constants.py] APP_ENV loaded: '{APP_ENV}', DB_ENV: '{DB_ENV}'")
 
 
 def get_collection_name(base_name: str) -> str:
@@ -62,7 +73,7 @@ def get_collection_name(base_name: str) -> str:
         >>> get_collection_name("attendance")
         'attendance_dev'
     """
-    if APP_ENV == "production":
+    if APP_ENV in ("production", "prod"):
         return base_name
     else:
         return f"{base_name}_dev"
