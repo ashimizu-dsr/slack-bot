@@ -65,7 +65,7 @@ from slack_sdk import WebClient
 
 # OAuth関連
 from slack_bolt.oauth.oauth_settings import OAuthSettings
-from slack_bolt.oauth.callback_options import CallbackOptions, FailureArgs
+from slack_bolt.oauth.callback_options import CallbackOptions, FailureArgs, SuccessArgs
 from slack_bolt.response import BoltResponse
 from slack_sdk.oauth.installation_store import InstallationStore, Installation, Bot
 
@@ -283,6 +283,21 @@ else:
 # OAuth コールバックのカスタムエラーハンドラー
 # ==========================================
 
+def custom_success_handler(_args: SuccessArgs) -> BoltResponse:
+    """
+    OAuth インストール成功時のレスポンスを返します。
+    """
+    return BoltResponse(
+        status=200,
+        headers={"Content-Type": "text/html; charset=utf-8"},
+        body="""<!DOCTYPE html>
+<html lang="ja">
+<head><meta charset="UTF-8"><title>インストール完了</title></head>
+<body><h1>インストール完了</h1><p>Slackアプリのインストールが完了しました。このページを閉じてください。</p></body>
+</html>"""
+    )
+
+
 def custom_failure_handler(args: FailureArgs) -> BoltResponse:
     """
     OAuth フロー中に発生した例外を捕捉し、適切な HTTP レスポンスを返します。
@@ -339,7 +354,7 @@ if enable_oauth:
                     "users:read.email", "mpim:read",
                 ],
                 installation_store=FirestoreInstallationStore(db_client),
-                callback_options=CallbackOptions(failure=custom_failure_handler)
+                callback_options=CallbackOptions(success=custom_success_handler, failure=custom_failure_handler)
             )
             logger.info("✅ OAuth settings configured successfully")
         except Exception as e:
