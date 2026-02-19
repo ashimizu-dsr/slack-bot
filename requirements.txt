@@ -20,3 +20,7 @@ google-cloud-pubsub>=2.18.0
 
 # 構造化ログをGCPに送るために推奨
 google-cloud-logging>=3.5.0
+
+# 認証（Cloud Scheduler / Pub/Sub からの OIDC トークン検証用）
+google-auth>=2.20.0
+requests>=2.31.0

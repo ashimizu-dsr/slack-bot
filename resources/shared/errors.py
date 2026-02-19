@@ -77,8 +77,18 @@ class ConcurrencyError(AttendanceBotError):
 class AuthorizationError(AttendanceBotError):
     """
     権限不足で操作が拒否された場合に発生します。
-    
+
     例: 他人の勤怠記録を編集しようとした場合
+    """
+    pass
+
+
+class DomainNotAllowedError(AttendanceBotError):
+    """
+    許可されていないメールドメインからの OAuth インストール試行時に発生します。
+
+    例: ALLOWED_DOMAIN="example.com" に設定されているが、
+        インストールユーザーのメールが "user@other-domain.com" だった場合
     """
     pass
 

@@ -65,6 +65,8 @@ from slack_sdk import WebClient
 
 # OAuth関連
 from slack_bolt.oauth.oauth_settings import OAuthSettings
+from slack_bolt.oauth.callback_options import CallbackOptions, FailureArgs
+from slack_bolt.response import BoltResponse
 from slack_sdk.oauth.installation_store import InstallationStore, Installation, Bot
 
 # 自作モジュール
@@ -72,6 +74,8 @@ from resources.services.attendance_service import AttendanceService
 from resources.services.notification_service import NotificationService
 from resources.listeners import register_all_listeners
 from resources.clients.slack_client import fetch_workspace_user_list
+from resources.shared.auth import verify_oidc_token
+from resources.shared.errors import AuthorizationError, DomainNotAllowedError
 
 logger.info(f"Initializing Slack Attendance Bot (Multi-tenant mode)")
 
@@ -99,10 +103,49 @@ class FirestoreInstallationStore(InstallationStore):
     def save(self, installation: Installation) -> None:
         """
         インストール情報をFirestoreに保存します。
-        
+
+        ALLOWED_DOMAIN 環境変数が設定されている場合、インストールユーザーのメールドメインを
+        検証します。ドメインが一致しない場合は DomainNotAllowedError を raise し、
+        Firestore への保存を行いません。
+
         Args:
             installation: slack_bolt.oauth.installation_store.Installation オブジェクト
         """
+        # ── ドメインチェック（ALLOWED_DOMAIN が設定されている場合のみ） ──
+        allowed_domain = os.environ.get("ALLOWED_DOMAIN", "").strip()
+        if allowed_domain:
+            try:
+                check_client = WebClient(token=installation.bot_token)
+                user_info = check_client.users_info(user=installation.user_id)
+                email: str = (
+                    user_info.get("user", {})
+                    .get("profile", {})
+                    .get("email", "")
+                )
+                if not email:
+                    logger.warning(
+                        f"[DomainCheck] Could not retrieve email: user={installation.user_id}"
+                    )
+                    raise DomainNotAllowedError(
+                        f"Email not available for user={installation.user_id}",
+                        user_message="メールアドレスを取得できなかったため、インストールを拒否しました。"
+                    )
+                domain = email.split("@")[-1].lower()
+                if domain != allowed_domain.lower():
+                    logger.warning(
+                        f"[DomainCheck] Domain mismatch: email={email}, allowed={allowed_domain}"
+                    )
+                    raise DomainNotAllowedError(
+                        f"Domain '{domain}' not allowed (allowed='{allowed_domain}')",
+                        user_message=f"ドメイン '{domain}' はインストールが許可されていません。"
+                    )
+                logger.info(f"[DomainCheck] Domain OK: {domain}")
+            except DomainNotAllowedError:
+                raise  # custom_failure_handler で捕捉させる
+            except Exception as e:
+                logger.error(f"[DomainCheck] Unexpected error: {e}", exc_info=True)
+                raise
+
         try:
             team_id = installation.team_id
             collection_name = get_collection_name("workspaces")
@@ -219,6 +262,46 @@ else:
     db_client = firestore.Client(database=APP_ENV)
     logger.info(f"[INIT] Main Firestore client initialized with database: {APP_ENV}")
 
+# ==========================================
+# OAuth コールバックのカスタムエラーハンドラー
+# ==========================================
+
+def custom_failure_handler(args: FailureArgs) -> BoltResponse:
+    """
+    OAuth フロー中に発生した例外を捕捉し、適切な HTTP レスポンスを返します。
+
+    - DomainNotAllowedError → 403 + 日本語エラーページ
+    - それ以外               → 500 + 汎用エラーページ
+    """
+    error = args.error
+    # slack-bolt のバージョンによっては原因例外が __cause__ に格納される
+    root_cause = getattr(error, "__cause__", None) or getattr(error, "__context__", None) or error
+
+    if isinstance(root_cause, DomainNotAllowedError) or isinstance(error, DomainNotAllowedError):
+        status = 403
+        title = "インストール拒否"
+        target = root_cause if isinstance(root_cause, DomainNotAllowedError) else error
+        message = target.user_message
+        logger.warning(f"[OAuthFailure] Domain not allowed: {error}")
+    else:
+        status = 500
+        title = "インストールエラー"
+        message = "予期しないエラーが発生しました。管理者に連絡してください。"
+        logger.error(f"[OAuthFailure] Unexpected error: {error}", exc_info=True)
+
+    html = f"""<!DOCTYPE html>
+<html lang="ja">
+<head><meta charset="UTF-8"><title>{title}</title></head>
+<body><h1>{title}</h1><p>{message}</p></body>
+</html>"""
+
+    return BoltResponse(
+        status=status,
+        headers={"Content-Type": "text/html; charset=utf-8"},
+        body=html
+    )
+
+
 # OAuth設定
 oauth_settings = None
 enable_oauth = os.environ.get("ENABLE_OAUTH", "false").lower() == "true"
@@ -244,8 +327,9 @@ if enable_oauth:
                     "im:history",
                     "groups:history"
                 ],
-                installation_store=FirestoreInstallationStore(db_client)
+                installation_store=FirestoreInstallationStore(db_client),
                 # state_store を指定しない → デフォルトの CookieStateStore を使用
+                callback_options=CallbackOptions(failure=custom_failure_handler)
             )
             logger.info("OAuth settings configured successfully")
         except Exception as e:
@@ -456,8 +540,18 @@ def slack_bot(request):
     
     # 2. Cloud Schedulerからのレポート実行リクエスト
     if path == "/job/report":
-        # logger.info("Cloud Scheduler triggered: Starting daily report...")
-        
+        # POST のみ受け付ける
+        if request.method != "POST":
+            logger.warning(f"[/job/report] Method not allowed: {request.method}")
+            return {"status": "error", "message": "Method Not Allowed"}, 405
+
+        # OIDC トークン検証（Cloud Scheduler からのリクエストであることを確認）
+        try:
+            verify_oidc_token(request)
+        except AuthorizationError as auth_err:
+            logger.warning(f"[/job/report] Unauthorized: {auth_err}")
+            return {"status": "error", "message": "Unauthorized"}, 401
+
         try:
             from datetime import timezone, timedelta
             from resources.clients.slack_client import get_slack_client
@@ -505,7 +599,14 @@ def slack_bot(request):
             return {"status": "error", "message": str(e)}, 500
     
     # 4. Pub/Subからのプッシュリクエスト(非同期処理)
-    if path == "/pubsub/interactions":        
+    if path == "/pubsub/interactions":
+        # OIDC トークン検証（Pub/Sub からのリクエストであることを確認）
+        try:
+            verify_oidc_token(request)
+        except AuthorizationError as auth_err:
+            logger.warning(f"[/pubsub/interactions] Unauthorized: {auth_err}")
+            return {"status": "error", "message": "Unauthorized"}, 401
+
         try:
             # Pub/Subメッセージのデコード
             envelope = request.get_json()
