@@ -447,7 +447,7 @@ def slack_bot(request):
 
     
     path = request.path
-    logger.info(f"Request received: path={path}, method={request.method}")
+    logger.info(f"--- INCOMING REQUEST --- Path: {path}, Method: {request.method}")
     
     # イベントの詳細をログ出力（デバッグ用）
     if request.is_json:
@@ -459,114 +459,41 @@ def slack_bot(request):
                 event_subtype = event_data.get("type") if isinstance(event_data, dict) else None
                 
                 logger.info(
-                    f"Slack Event: type={event_type}, "
+                    f"Slack Event Body: type={event_type}, "
                     f"event.type={event_subtype}, "
                     f"team_id={body.get('team_id')}"
                 )
-                
-                # member_joined_channelイベントの詳細ログ
-                if event_subtype == "member_joined_channel":
-                    logger.info(
-                        f"[member_joined_channel] Detected: "
-                        f"channel={event_data.get('channel')}, "
-                        f"user={event_data.get('user')}, "
-                        f"team={event_data.get('team')}"
-                    )
         except Exception as e:
             logger.debug(f"Could not parse request body for logging: {e}")
-    
-    # # 1. OAuth インストールページ
-    # if path == "/slack/install":
-    #     logger.info("OAuth install page requested")
-        
-    #     if not oauth_settings:
-    #         return "OAuth is not configured. Please set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET.", 500
-        
-    #     try:
-    #         from slack_sdk.oauth import AuthorizeUrlGenerator
-    #         from slack_bolt.oauth.oauth_settings import OAuthSettings
-            
-    #         # インストールURLを生成
-    #         authorize_url_generator = AuthorizeUrlGenerator(
-    #             client_id=oauth_settings.client_id,
-    #             scopes=oauth_settings.scopes,
-    #             user_scopes=oauth_settings.user_scopes or []
-    #         )
-            
-    #         state = oauth_settings.state_store.issue()
-    #         install_url = authorize_url_generator.generate(state)
-            
-    #         return f"""
-    #         <!DOCTYPE html>
-    #         <html lang="ja">
-    #         <head>
-    #             <meta charset="UTF-8">
-    #             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    #             <title>勤怠管理Botのインストール</title>
-    #             <style>
-    #                 body {{
-    #                     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    #                     max-width: 600px;
-    #                     margin: 100px auto;
-    #                     padding: 20px;
-    #                     text-align: center;
-    #                 }}
-    #                 h1 {{
-    #                     color: #333;
-    #                     margin-bottom: 20px;
-    #                 }}
-    #                 p {{
-    #                     color: #666;
-    #                     line-height: 1.6;
-    #                     margin-bottom: 30px;
-    #                 }}
-    #                 .install-button {{
-    #                     display: inline-block;
-    #                     margin: 20px 0;
-    #                 }}
-    #             </style>
-    #         </head>
-    #         <body>
-    #             <h1>📊 勤怠管理Botをインストール</h1>
-    #             <p>以下のボタンをクリックして、ワークスペースにBotをインストールしてください。</p>
-    #             <div class="install-button">
-    #                 <a href="{install_url}">
-    #                     <img alt="Add to Slack" 
-    #                          height="40" 
-    #                          width="139" 
-    #                          src="https://platform.slack-edge.com/img/add_to_slack.png" 
-    #                          srcSet="https://platform.slack-edge.com/img/add_to_slack.png 1x, 
-    #                                 https://platform.slack-edge.com/img/add_to_slack@2x.png 2x" />
-    #                 </a>
-    #             </div>
-    #             <p style="font-size: 0.9em; color: #999;">
-    #                 インストール後、Slackアプリに戻って使用を開始できます。
-    #             </p>
-    #         </body>
-    #         </html>
-    #         """, 200
-            
-    #     except Exception as e:
-    #         logger.error(f"Failed to generate install URL: {e}", exc_info=True)
-    #         return f"Error: {e}", 500
 
-    logger.info(f"--- INCOMING REQUEST --- Path: {request.path}")
-    if request.is_json:
-        logger.info(f"Body: {request.get_json()}")
-    
-    # 1. OAuth インストールページ
+    # ------------------------------------------
+    # 1. OAuth インストールページ（/slack/install）
+    # ------------------------------------------
+    if path == "/slack/install":
+        logger.info("Handling OAuth install page request")
+        if not oauth_settings:
+            logger.error("OAuth is requested but not configured (oauth_settings is None)")
+            return "OAuth is not configured. Please check environment variables.", 500
+        
+        # Slack Bolt のハンドラーに処理を任せることで、
+        # oauth_settings で定義した scopes を含んだ正しいURLが生成されます
+        return handler.handle(request)
+
+    # ------------------------------------------
+    # 2. OAuth リダイレクトページ（/slack/oauth_redirect）
+    # ------------------------------------------
     if path == "/slack/oauth_redirect":
-        logger.info("OAuth redirect request received")
+        logger.info("Handling OAuth redirect request")
         return handler.handle(request)
     
-    # 2. Cloud Schedulerからのレポート実行リクエスト
+    # ------------------------------------------
+    # 3. Cloud Schedulerからのレポート実行リクエスト
+    # ------------------------------------------
     if path == "/job/report":
-        # POST のみ受け付ける
         if request.method != "POST":
             logger.warning(f"[/job/report] Method not allowed: {request.method}")
             return {"status": "error", "message": "Method Not Allowed"}, 405
 
-        # OIDC トークン検証（Cloud Scheduler からのリクエストであることを確認）
         try:
             verify_oidc_token(request)
         except AuthorizationError as auth_err:
@@ -580,7 +507,6 @@ def slack_bot(request):
             JST = timezone(timedelta(hours=9))
             today_str = datetime.datetime.now(JST).date().isoformat()
             
-            # マルチテナント対応: 全ワークスペースに対してレポートを送信
             workspaces_docs = db_client.collection(get_collection_name("workspaces")).stream()
             
             success_count = 0
@@ -588,25 +514,14 @@ def slack_bot(request):
             
             for ws_doc in workspaces_docs:
                 workspace_id = ws_doc.id
-                workspace_data = ws_doc.to_dict()
-                
-                logger.info(f"Processing daily report: date={today_str}, workspace={workspace_id}")
-                
                 try:
-                    # ワークスペースごとに WebClient を取得
                     client = get_slack_client(workspace_id)
-                    
-                    # NotificationService を動的に生成
                     notification_service_instance = NotificationService(client, attendance_service)
-                    
-                    # レポート送信処理の実行
                     notification_service_instance.send_daily_report(today_str, workspace_id)
                     success_count += 1
-                    
                 except Exception as ws_error:
                     logger.error(f"Failed to send report for workspace {workspace_id}: {ws_error}", exc_info=True)
                     error_count += 1
-                    continue
             
             return {
                 "status": "completed",
@@ -619,9 +534,10 @@ def slack_bot(request):
             logger.error(f"Failed to send daily report: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}, 500
     
+    # ------------------------------------------
     # 4. Pub/Subからのプッシュリクエスト(非同期処理)
+    # ------------------------------------------
     if path == "/pubsub/interactions":
-        # OIDC トークン検証（Pub/Sub からのリクエストであることを確認）
         try:
             verify_oidc_token(request)
         except AuthorizationError as auth_err:
@@ -629,7 +545,6 @@ def slack_bot(request):
             return {"status": "error", "message": "Unauthorized"}, 401
 
         try:
-            # Pub/Subメッセージのデコード
             envelope = request.get_json()
             if not envelope or "message" not in envelope:
                 return "Invalid Pub/Sub message", 400
@@ -642,7 +557,6 @@ def slack_bot(request):
             team_id = payload.get("team_id")
             event = payload.get("event")
 
-            # リスナーマップから適切なリスナーを取得して実行
             listener = listener_map.get(action_type)
             if listener:
                 logger.info(f"Pub/Sub: Dispatching to {action_type}")
@@ -650,15 +564,14 @@ def slack_bot(request):
             else:
                 logger.warning(f"Unknown action_type: {action_type}")
 
-            # 正常終了を返す（リトライを防ぐ）
             return "OK", 200
-
         except Exception as e:
             logger.error(f"Pub/Sub dispatch failed: {e}", exc_info=True)
-            # 500を返すとPub/Subが無限再送するため、エラーでも一旦200で止める運用を推奨
             return {"status": "error", "message": str(e)}, 200
     
-    # 5. 通常のSlackイベント（メッセージ、ボタン、ショートカット等）
+    # ------------------------------------------
+    # 5. 通常のSlackイベント
+    # ------------------------------------------
     try:
         return handler.handle(request)
     except Exception as e:
