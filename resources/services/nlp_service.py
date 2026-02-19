@@ -352,7 +352,11 @@ def extract_attendance_from_text(
         # スレッド返信時は「やり取りから最終的な出勤ステータスを判定」する形でユーザーメッセージを構成
         if thread_context:
             user_content = (
-                "以下のやり取りから、最終的な出勤ステータスを判定してください。"
+                "以下のやり取りから、最終的な出勤ステータスを判定してください。\n"
+                "・雑談や勤怠でない返信の場合は attendances を返さない（空で返す）。\n"
+                "・取消: 返信に「取消」「キャンセル」「取り消し」「削除」が含まれる場合、"
+                "または親が遅刻・遅延で返信が「間に合った」「出社した」等の場合は action='delete' 可。"
+                "それ以外の曖昧な返信では action='delete' を設定しない。\n"
                 "（例: 親で遅刻予定、返信で「間に合いました」なら出社/遅刻取り消しとして扱う）\n\n"
                 "【やり取り】\n"
                 f"{thread_context}\n\n"
@@ -442,3 +446,22 @@ def extract_attendance_from_text(
     except Exception as e:
         logger.error(f"AI Extraction Error: {e}", exc_info=True)
         return None
+
+
+# --- スレッド返信時の削除ガード用（取消・取り消し表現の判定） ---
+EXPLICIT_CANCELLATION_KEYWORDS = ("取消", "キャンセル", "取り消し", "削除")
+LATE_CANCELLATION_PHRASES = ("間に合った", "間に合いました", "出社した", "出社しました")
+
+
+def reply_has_explicit_cancellation_keywords(text: str) -> bool:
+    """返信文に明示的な取消キーワードが含まれるか。"""
+    if not text or not isinstance(text, str):
+        return False
+    return any(kw in text for kw in EXPLICIT_CANCELLATION_KEYWORDS)
+
+
+def reply_has_late_cancellation_phrases(text: str) -> bool:
+    """返信文に遅刻・遅延取り消し表現（間に合った/出社した等）が含まれるか。"""
+    if not text or not isinstance(text, str):
+        return False
+    return any(phrase in text for phrase in LATE_CANCELLATION_PHRASES)

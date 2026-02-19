@@ -18,7 +18,11 @@ import logging
 from typing import Optional
 
 from resources.listeners.Listener import Listener
-from resources.services.nlp_service import extract_attendance_from_text
+from resources.services.nlp_service import (
+    extract_attendance_from_text,
+    reply_has_explicit_cancellation_keywords,
+    reply_has_late_cancellation_phrases,
+)
 from resources.shared.utils import get_user_email
 from resources.templates.modals import create_history_modal_view
 from resources.clients.slack_client import get_slack_client, fetch_message_in_channel
@@ -437,6 +441,27 @@ class AttendanceListener(Listener):
 
                 # A. 削除アクション
                 if action == "delete":
+                    # スレッド返信時: 誤取消を防ぐガード（パターンA or パターンB のみ削除実行）
+                    if thread_context:
+                        pattern_a = reply_has_explicit_cancellation_keywords(text)
+                        att_status = (att.get("status") or "").strip().lower()
+                        pattern_b = (
+                            reply_has_late_cancellation_phrases(text)
+                            and att_status in ("late", "late_delay")
+                        )
+                        if not pattern_a and not pattern_b:
+                            logger.info(
+                                f"スレッド返信の削除をスキップ（ガード）: text={text[:30]}..., status={att_status}"
+                            )
+                            try:
+                                client.chat_postEphemeral(
+                                    channel=channel,
+                                    user=user_id,
+                                    text="取消する場合は、メッセージに「取消」「キャンセル」「取り消し」「削除」のいずれかを含めて送信してください。"
+                                )
+                            except Exception:
+                                pass
+                            continue
                     try:
                         self.attendance_service.delete_attendance(team_id, effective_user_id, date)
                         notification_service.notify_attendance_change(
