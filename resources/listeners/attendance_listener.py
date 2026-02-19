@@ -21,9 +21,9 @@ from resources.listeners.Listener import Listener
 from resources.services.nlp_service import extract_attendance_from_text
 from resources.shared.utils import get_user_email
 from resources.templates.modals import create_history_modal_view
-from resources.clients.slack_client import get_slack_client
+from resources.clients.slack_client import get_slack_client, fetch_message_in_channel
 from resources.services.notification_service import NotificationService
-from resources.shared.db import get_single_attendance_record
+from resources.shared.db import get_single_attendance_record, get_workspace_user_list
 from resources.templates.modals import (
     create_attendance_modal_view,
     create_attendance_delete_confirm_modal
@@ -349,12 +349,7 @@ class AttendanceListener(Listener):
         if event.get("subtype"):
             return False
         
-        # スレッド内のメッセージは除外（thread_tsがあり、それが自分のtsと異なる場合）
-        thread_ts = event.get("thread_ts")
-        if thread_ts and thread_ts != event.get("ts"):
-            logger.info(f"スレッド内メッセージのため処理をスキップ: channel={event.get('channel')}, thread_ts={thread_ts}")
-            return False
-        
+        # スレッド内のメッセージも処理する（電車遅延等でギリギリ間に合った場合の「間に合った」報告をAIで判定するため）
         return True
 
     def _handle_message_async(self, team_id: str, event: dict):
@@ -372,10 +367,27 @@ class AttendanceListener(Listener):
 
         try:
             client = get_slack_client(team_id)
-            email: Optional[str] = get_user_email(client, user_id, logger)
-            
-            # 1. AI解析実行（team_id, user_idを渡してコストログを出力）
-            extraction = extract_attendance_from_text(text, team_id=team_id, user_id=user_id)
+            sender_email: Optional[str] = get_user_email(client, user_id, logger)
+            workspace_user_list = get_workspace_user_list(team_id)
+
+            # スレッド返信の場合は親メッセージを取得し「親＋子」をセットでAIに渡す
+            thread_context: Optional[str] = None
+            thread_ts = event.get("thread_ts")
+            if thread_ts and thread_ts != ts:
+                parent_msg = fetch_message_in_channel(client, channel, thread_ts)
+                parent_text = (parent_msg.get("text") or "").strip() if parent_msg else ""
+                thread_context = f"親メッセージ:\n{parent_text}\n\n返信:\n{text}"
+                logger.info(f"スレッド返信を検出: 親+子をセットでAIに渡します thread_ts={thread_ts}")
+
+            # 1. AI解析実行（誰の勤怠かは target_user_id で返る）
+            extraction = extract_attendance_from_text(
+                text,
+                team_id=team_id,
+                user_id=user_id,
+                message_ts=ts if thread_context else None,
+                thread_context=thread_context,
+                workspace_user_list=workspace_user_list if workspace_user_list else None,
+            )
             
             if not extraction:
                 # AI解析失敗時のログを構造化ログとして出力
@@ -396,7 +408,21 @@ class AttendanceListener(Listener):
             except Exception:
                 pass
 
-            # 2. 抽出結果をリスト化（複数日対応）
+            # 2. 誰の勤怠として記録するか（メッセージ内の人名 → target_user_id）
+            target_user_id = extraction.get("target_user_id")
+            if target_user_id and workspace_user_list:
+                matched = next((u for u in workspace_user_list if (u.get("user_id") or "") == target_user_id), None)
+                if matched:
+                    effective_user_id = matched["user_id"]
+                    effective_email = (matched.get("email") or "").strip() or get_user_email(client, effective_user_id, logger)
+                else:
+                    effective_user_id = user_id
+                    effective_email = sender_email
+            else:
+                effective_user_id = user_id
+                effective_email = sender_email
+
+            # 3. 抽出結果をリスト化（複数日対応）
             attendances = [extraction]
             if "_additional_attendances" in extraction:
                 attendances.extend(extraction["_additional_attendances"])
@@ -404,7 +430,7 @@ class AttendanceListener(Listener):
             # NotificationService を動的に生成
             notification_service = NotificationService(client, self.attendance_service)
 
-            # 3. ループ処理
+            # 4. ループ処理
             for att in attendances:
                 date = att.get("date")
                 action = att.get("action", "save")
@@ -412,9 +438,9 @@ class AttendanceListener(Listener):
                 # A. 削除アクション
                 if action == "delete":
                     try:
-                        self.attendance_service.delete_attendance(team_id, user_id, date)
+                        self.attendance_service.delete_attendance(team_id, effective_user_id, date)
                         notification_service.notify_attendance_change(
-                            record={"user_id": user_id, "date": date},
+                            record={"user_id": effective_user_id, "date": date},
                             channel=channel,
                             thread_ts=ts,
                             is_delete=True
@@ -435,19 +461,19 @@ class AttendanceListener(Listener):
                 # B. 保存・更新アクション
                 record = self.attendance_service.save_attendance(
                     workspace_id=team_id,
-                    user_id=user_id, 
-                    email=email,
-                    date=date, 
-                    status=att.get("status"), 
-                    note=att.get("note", ""), 
-                    channel_id=channel, 
+                    user_id=effective_user_id,
+                    email=effective_email,
+                    date=date,
+                    status=att.get("status"),
+                    note=att.get("note", ""),
+                    channel_id=channel,
                     ts=ts
                 )
                 
                 # 通知カードの送信
                 notification_service.notify_attendance_change(
-                    record=record, 
-                    channel=channel, 
+                    record=record,
+                    channel=channel,
                     thread_ts=ts,
                     is_update=False
                 )

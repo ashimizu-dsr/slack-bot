@@ -187,6 +187,84 @@ def delete_attendance_record_db(workspace_id: str, user_id: str, date: str) -> N
         logger.error(f"Error deleting record: {e}", exc_info=True)
         raise
 
+
+# ---------------------------------------------------------------------------
+# ワークスペースユーザリスト（人名→メール解決用）
+# ---------------------------------------------------------------------------
+
+def save_workspace_user_list(team_id: str, users: List[Dict[str, Any]]) -> None:
+    """
+    ワークスペースのユーザリストをFirestoreに保存します。
+    Botインストール時や users.list 同期で使用します。
+
+    Args:
+        team_id: SlackワークスペースID
+        users: [{ user_id, email, real_name, display_name }, ...]
+    """
+    try:
+        coll = db.collection(get_collection_name("workspace_users"))
+        doc_ref = coll.document(team_id)
+        doc_ref.set({
+            "users": users,
+            "updated_at": firestore.SERVER_TIMESTAMP
+        }, merge=True)
+        logger.info(f"Saved workspace user list: team_id={team_id}, count={len(users)}")
+    except Exception as e:
+        logger.error(f"Error saving workspace user list: {e}", exc_info=True)
+        raise
+
+
+def get_workspace_user_list(team_id: str) -> List[Dict[str, Any]]:
+    """
+    ワークスペースのユーザリストを取得します。
+
+    Args:
+        team_id: SlackワークスペースID
+
+    Returns:
+        [{ user_id, email, real_name, display_name }, ...]。未作成の場合は空リスト。
+    """
+    try:
+        doc = db.collection(get_collection_name("workspace_users")).document(team_id).get()
+        if not doc.exists:
+            return []
+        data = doc.to_dict() or {}
+        return data.get("users") or []
+    except Exception as e:
+        logger.error(f"Error fetching workspace user list: {e}", exc_info=True)
+        return []
+
+
+def append_or_update_workspace_user(team_id: str, user: Dict[str, Any]) -> None:
+    """
+    ワークスペースユーザリストに1ユーザーを追加または更新します。
+    team_join イベント時に使用します。
+
+    Args:
+        team_id: SlackワークスペースID
+        user: { user_id, email, real_name, display_name }
+    """
+    try:
+        coll = db.collection(get_collection_name("workspace_users"))
+        doc_ref = coll.document(team_id)
+        current = get_workspace_user_list(team_id)
+        uid = user.get("user_id") or ""
+        if not uid:
+            logger.warning("append_or_update_workspace_user: user_id is empty, skip")
+            return
+        # 同一 user_id を更新、なければ追加
+        new_list = [u for u in current if u.get("user_id") != uid]
+        new_list.append(user)
+        doc_ref.set({
+            "users": new_list,
+            "updated_at": firestore.SERVER_TIMESTAMP
+        }, merge=True)
+        logger.info(f"Appended/updated workspace user: team_id={team_id}, user_id={uid}")
+    except Exception as e:
+        logger.error(f"Error appending workspace user: {e}", exc_info=True)
+        raise
+
+
 def get_channel_members_with_section(workspace_id: Optional[str] = None) -> tuple[Dict[str, List[str]], str]:
     """
     課別メンバー設定をFirestoreから取得します。

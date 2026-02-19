@@ -15,7 +15,11 @@ from typing import Optional
 
 from resources.listeners.Listener import Listener
 from resources.clients.slack_client import get_slack_client
-from resources.shared.db import is_channel_history_processed, mark_channel_history_processed
+from resources.shared.db import (
+    is_channel_history_processed,
+    mark_channel_history_processed,
+    append_or_update_workspace_user,
+)
 from resources.shared.utils import get_user_email
 
 logger = logging.getLogger(__name__)
@@ -46,7 +50,38 @@ class SystemListener(Listener):
         """
         
         logger.info("SystemListener.handle_sync: イベントハンドラーを登録中...")
-       
+
+        # ==========================================
+        # 0. ワークスペースに新メンバーが参加したとき（ユーザリスト更新）
+        # ==========================================
+        @app.event("team_join")
+        def on_team_join(event, ack, body):
+            """新メンバーがワークスペースに参加したとき、ワークスペースユーザリストに追加します。"""
+            ack()
+            try:
+                team_id = body.get("team_id") or event.get("team_id")
+                user_id = event.get("user")
+                if not team_id or not user_id:
+                    logger.warning("[team_join] team_id or user missing, skip")
+                    return
+                client = get_slack_client(team_id)
+                resp = client.users_info(user=user_id)
+                if not resp.get("ok"):
+                    logger.warning(f"[team_join] users_info failed: {resp.get('error')}")
+                    return
+                u = resp.get("user", {})
+                profile = u.get("profile") or {}
+                user_entry = {
+                    "user_id": user_id,
+                    "email": (profile.get("email") or "").strip(),
+                    "real_name": (u.get("real_name") or "").strip(),
+                    "display_name": (profile.get("display_name") or "").strip(),
+                }
+                append_or_update_workspace_user(team_id, user_entry)
+                logger.info(f"[team_join] workspace user list updated: team_id={team_id}, user_id={user_id}")
+            except Exception as e:
+                logger.error(f"[team_join] error: {e}", exc_info=True)
+
         # ==========================================
         # 1. Botがチャンネルに参加したとき
         # ==========================================

@@ -49,6 +49,7 @@ settings:
     request_url: https://slack-kintai-bot-dev-478434513686.asia-northeast1.run.app/slack/events
     bot_events:
       - member_joined_channel
+      - team_join
       - message.channels
       - message.im
   interactivity:

@@ -46,6 +46,78 @@ def get_slack_client(team_id: str) -> WebClient:
     return WebClient(token=bot_token)
 
 
+def fetch_message_in_channel(
+    client: WebClient, channel: str, ts: str
+) -> Optional[Dict[str, Any]]:
+    """
+    チャンネル内の指定 ts のメッセージを1件取得します。
+    conversations.history を使用（スレッドの親メッセージ取得に利用）。
+
+    Args:
+        client: Slack WebClient
+        channel: チャンネルID
+        ts: メッセージのタイムスタンプ（例: thread_ts）
+
+    Returns:
+        メッセージ辞書（text 等）。取得失敗時は None
+    """
+    try:
+        res = client.conversations_history(
+            channel=channel, latest=ts, limit=1, inclusive=True
+        )
+        if not res.get("ok") or not res.get("messages"):
+            return None
+        return res["messages"][0]
+    except Exception as e:
+        logger.error(
+            f"メッセージ取得失敗: channel={channel}, ts={ts}, {e}", exc_info=True
+        )
+        return None
+
+
+def fetch_workspace_user_list(client: WebClient) -> List[Dict[str, Any]]:
+    """
+    ワークスペースの全ユーザーを users.list で取得し、
+    user_id, email, real_name, display_name のリストを返します。
+    Bot・削除済みユーザーは除外します。
+
+    Args:
+        client: Slack WebClient（bot_token で生成されたもの）
+
+    Returns:
+        [{ user_id, email, real_name, display_name }, ...]
+    """
+    result: List[Dict[str, Any]] = []
+    cursor: Optional[str] = None
+    try:
+        while True:
+            resp = client.users_list(limit=200, cursor=cursor)
+            if not resp.get("ok"):
+                logger.error(f"users.list error: {resp.get('error')}")
+                break
+            for member in resp.get("members", []):
+                if member.get("is_bot") or member.get("deleted"):
+                    continue
+                uid = member.get("id")
+                if not uid:
+                    continue
+                profile = member.get("profile") or {}
+                result.append({
+                    "user_id": uid,
+                    "email": (profile.get("email") or "").strip(),
+                    "real_name": (member.get("real_name") or "").strip(),
+                    "display_name": (profile.get("display_name") or "").strip(),
+                })
+            cursor = (resp.get("response_metadata") or {}).get("next_cursor")
+            if not cursor:
+                break
+        logger.info(f"fetch_workspace_user_list: {len(result)} users")
+        return result
+    except Exception as e:
+        logger.error(f"fetch_workspace_user_list failed: {e}", exc_info=True)
+        return result
+
+
 class SlackClientWrapper:
     """
     Slack Web APIクライアントのラッパークラス。

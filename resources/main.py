@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 
 # Firestore
 from google.cloud import firestore
-from resources.shared.db import init_db
+from resources.shared.db import init_db, save_workspace_user_list
 from resources.constants import get_collection_name
 
 # Slack Bolt
@@ -71,6 +71,7 @@ from slack_sdk.oauth.installation_store import InstallationStore, Installation, 
 from resources.services.attendance_service import AttendanceService
 from resources.services.notification_service import NotificationService
 from resources.listeners import register_all_listeners
+from resources.clients.slack_client import fetch_workspace_user_list
 
 logger.info(f"Initializing Slack Attendance Bot (Multi-tenant mode)")
 
@@ -124,7 +125,18 @@ class FirestoreInstallationStore(InstallationStore):
             
             self.db.collection(collection_name).document(team_id).set(data, merge=True)
             logger.info(f"Installation saved to Firestore: team_id={team_id}, team_name={installation.team_name}")
-            
+
+            # インストール直後にワークスペースユーザリストを初回作成
+            if installation.bot_token:
+                try:
+                    client = WebClient(token=installation.bot_token)
+                    users = fetch_workspace_user_list(client)
+                    if users:
+                        save_workspace_user_list(team_id, users)
+                        logger.info(f"Workspace user list synced: team_id={team_id}, count={len(users)}")
+                except Exception as sync_err:
+                    logger.warning(f"Workspace user list sync failed (non-fatal): {sync_err}", exc_info=True)
+
         except Exception as e:
             logger.error(f"Failed to save installation: {e}", exc_info=True)
             raise

@@ -98,20 +98,26 @@ def _format_note(att_data: Dict) -> str:
     return str(ai_note).strip()
 
 def extract_attendance_from_text(
-    text: str, 
-    team_id: Optional[str] = None, 
+    text: str,
+    team_id: Optional[str] = None,
     user_id: Optional[str] = None,
-    message_ts: Optional[str] = None
+    message_ts: Optional[str] = None,
+    thread_context: Optional[str] = None,
+    workspace_user_list: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     テキストから勤怠情報をAIで抽出します。
-    
+
     Args:
-        text: ユーザーが投稿したメッセージ
+        text: ユーザーが投稿したメッセージ（単体、またはスレッド返信の場合は子メッセージ）
         team_id: ワークスペースID（コストログ用、オプション）
         user_id: ユーザーID（コストログ用、オプション）
         message_ts: メッセージのタイムスタンプ（過去ログ処理用、オプション）
-        
+        thread_context: スレッド返信時に「親メッセージ＋返信」をセットにした文字列。
+            「親: ... / 返信: ...」の形式で渡すと、AIに「以下のやり取りから最終的な出勤ステータスを判定して」と投げる。
+        workspace_user_list: ワークスペースのユーザー一覧。メッセージ内の人名から誰の勤怠かを判定する際に使用。
+            [{ user_id, email, real_name, display_name }, ...]。省略時は常に送信者本人の勤怠として扱う。
+
     Returns:
         抽出結果の辞書:
         {
@@ -119,15 +125,17 @@ def extract_attendance_from_text(
             "status": "late" など,
             "note": "備考",
             "action": "save" または "delete",
+            "target_user_id": "Slack user_id または None（誰の勤怠か。省略時は送信者本人）",
             "_additional_attendances": [...] (複数日の場合)
         }
         抽出できない場合はNone
-        
+
     Note:
         - OpenAI API (gpt-4o-mini) を使用
         - 打ち消し線 (~text~) は前処理で "(strike-through: text)" に変換
         - 複数日の記録にも対応（_additional_attendances に格納）
         - message_tsが指定されている場合は、そのタイムスタンプの日付を基準に「明日」などを解釈
+        - thread_context 指定時は「やり取りから最終的な出勤ステータスを判定」するプロンプトで送る
     """
     logger.info(f"DEBUG_AI_INPUT: [{text}] (type: {type(text)})")
     api_key = os.getenv("OPENAI_API_KEY")
@@ -139,6 +147,8 @@ def extract_attendance_from_text(
     # Slackの ~text~ 記法を AIが理解しやすい形式に変換
     clean_text = text
     clean_text = re.sub(r'~(.*?)~', r'(strike-through: \1)', clean_text)
+    if thread_context:
+        thread_context = re.sub(r'~(.*?)~', r'(strike-through: \1)', thread_context)
 
     client = OpenAI(api_key=api_key)
     
@@ -157,10 +167,10 @@ def extract_attendance_from_text(
         base_date = datetime.date.today() 
     
     try:
-        # システム指示の定義（最新ルール 2026-01-28: 実例ベース最適化版）
+        # システム指示の定義（最新ルール 2026-01-28: 実例ベース最適化版 + target_user_id）
         system_instruction = (
             "You are an attendance data extractor. Output JSON only.\n"
-            "Format: {\"is_attendance\": bool, \"attendances\": [{\"date\": \"YYYY-MM-DD\", \"status\": \"string\", \"note\": \"string\", \"action\": \"save\"|\"delete\"}]}\n\n"
+            "Format: {\"is_attendance\": bool, \"target_user_id\": \"Slack user_id or null\", \"attendances\": [{\"date\": \"YYYY-MM-DD\", \"status\": \"string\", \"note\": \"string\", \"action\": \"save\"|\"delete\"}]}\n\n"
 
             "CORE RULES:\n"
             "1. PLAIN '出社': If message says just '出社' (e.g., '1/26...出社') -> action='delete' (returning to normal work)\n"
@@ -185,7 +195,8 @@ def extract_attendance_from_text(
             "   - Time details: ALWAYS include if mentioned (e.g., '10時出社', '11時から1時間中抜け')\n"
             "   - Secondary info: Put in parentheses (e.g., '体調不良（10時出社）', '在宅（昼休憩13:00〜14:00）')\n"
             "10. HEALTH: Format as '体調不良(症状/時間)'\n"
-            "11. CANCELLATION: Only '取消/キャンセル/取り消し/削除' -> action='delete'. '変更' is NOT cancellation.\n\n"
+            "11. CANCELLATION: Only '取消/キャンセル/取り消し/削除' -> action='delete'. '変更' is NOT cancellation.\n"
+            "12. TARGET PERSON: When the message clearly refers to ANOTHER person's attendance (e.g. '荒木課長 在宅', '荒木さんの勤怠'), set target_user_id to that person's user_id from the 'Workspace users' list. When the message is about the sender's own attendance, set target_user_id to null.\n\n"
 
             "STATUS:\n"
             "- vacation/vacation_am/vacation_pm/vacation_hourly: Leave\n"
@@ -338,10 +349,33 @@ def extract_attendance_from_text(
             }
         ]
         
+        # スレッド返信時は「やり取りから最終的な出勤ステータスを判定」する形でユーザーメッセージを構成
+        if thread_context:
+            user_content = (
+                "以下のやり取りから、最終的な出勤ステータスを判定してください。"
+                "（例: 親で遅刻予定、返信で「間に合いました」なら出社/遅刻取り消しとして扱う）\n\n"
+                "【やり取り】\n"
+                f"{thread_context}\n\n"
+                f"Today: {base_date} ({base_date.strftime('%A')})"
+            )
+        else:
+            user_content = f"Today: {base_date} ({base_date.strftime('%A')})\nText: {clean_text}"
+
+        # ワークスペースユーザー一覧を渡す場合（誰の勤怠かを判定するため）
+        if workspace_user_list:
+            lines = ["Workspace users (use exact user_id for target_user_id when message is for someone else):"]
+            for u in workspace_user_list:
+                uid = u.get("user_id") or ""
+                rn = (u.get("real_name") or "").strip()
+                dn = (u.get("display_name") or "").strip()
+                em = (u.get("email") or "").strip()
+                lines.append(f"  {uid}: {rn} ({dn}) / {em}")
+            user_content = user_content + "\n\n" + "\n".join(lines)
+
         messages = [
             {"role": "system", "content": system_instruction},
             *few_shot_examples,  # Few-shot examplesを挿入
-            {"role": "user", "content": f"Today: {base_date} ({base_date.strftime('%A')})\nText: {clean_text}"}
+            {"role": "user", "content": user_content},
         ]
         
         response = client.chat.completions.create(
@@ -397,6 +431,10 @@ def extract_attendance_from_text(
         final_result = results[0]
         if len(results) > 1:
             final_result["_additional_attendances"] = results[1:]
+
+        # 誰の勤怠か（メッセージ内に他人の名前がある場合にAIが設定）
+        raw_target = data.get("target_user_id")
+        final_result["target_user_id"] = (raw_target if raw_target and str(raw_target).strip() else None)
 
         logger.info(f"AI抽出成功: {len(results)}件の勤怠情報を抽出")
         return final_result
