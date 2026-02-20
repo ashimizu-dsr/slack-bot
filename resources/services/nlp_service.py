@@ -456,10 +456,17 @@ def extract_attendance_from_text(
 
 # --- スレッド返信時の削除ガード用（取消・取り消し表現の判定） ---
 EXPLICIT_CANCELLATION_KEYWORDS = ("取消", "キャンセル", "取り消し", "削除")
-LATE_CANCELLATION_PHRASES = ("間に合った", "間に合いました", "出社した", "出社しました")
+LATE_CANCELLATION_PHRASES = (
+    "間に合った", "間に合いました",
+    "間に合ってます", "間に合っています", "間に合ってる",
+    "出社した", "出社しました",
+)
 
 # 時間・コンテキストを問わず常に取消とみなすフレーズ（「間に合った」等）
-ALWAYS_CANCEL_PHRASES = ("間に合った", "間に合いました")
+ALWAYS_CANCEL_PHRASES = (
+    "間に合った", "間に合いました",
+    "間に合ってます", "間に合っています", "間に合ってる",
+)
 
 
 def reply_has_explicit_cancellation_keywords(text: str) -> bool:
