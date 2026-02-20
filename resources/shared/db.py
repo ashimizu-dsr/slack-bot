@@ -15,6 +15,28 @@ from resources.constants import get_collection_name, APP_ENV, DB_ENV
 
 logger = logging.getLogger(__name__)
 
+# TTB専用ワークスペースID（このワークスペースの勤怠データのみ専用コレクションに隔離）
+_TTB_WORKSPACE_ID = "T09R8SWTW49"
+
+
+def _get_attendance_collection(workspace_id: Optional[str] = None) -> str:
+    """
+    attendance コレクション名を返す。
+
+    production 環境かつ TTB ワークスペース (_TTB_WORKSPACE_ID) の場合のみ
+    専用コレクション "attendance_TTB" を使用し、それ以外は通常の
+    get_collection_name("attendance") に従う。
+
+    Args:
+        workspace_id: Slackワークスペースの一意ID（Noneの場合は通常コレクションを返す）
+
+    Returns:
+        使用するFirestoreコレクション名
+    """
+    if APP_ENV in ("production", "prod") and workspace_id == _TTB_WORKSPACE_ID:
+        return "attendance_TTB"
+    return get_collection_name("attendance")
+
 # Firestoreクライアントのグローバルインスタンス
 try:
     # APP_ENVに基づいて接続先データベースを決定
@@ -76,7 +98,7 @@ def save_attendance_record(
     try:
         # ドキュメントID: {user_id}_{date}（ワークスペース共通）
         doc_id = f"{user_id}_{date}"
-        doc_ref = db.collection(get_collection_name("attendance")).document(doc_id)
+        doc_ref = db.collection(_get_attendance_collection(workspace_id)).document(doc_id)
         
         data = {
             "workspace_id": workspace_id,
@@ -112,7 +134,7 @@ def get_single_attendance_record(workspace_id: str, user_id: str, date: str) -> 
     """
     try:
         doc_id = f"{user_id}_{date}"
-        doc = db.collection(get_collection_name("attendance")).document(doc_id).get()
+        doc = db.collection(_get_attendance_collection(workspace_id)).document(doc_id).get()
         if doc.exists:
             return doc.to_dict()
         return None
@@ -142,8 +164,8 @@ def get_user_history_from_db(
         Exception: Firestore読み取りに失敗した場合（ログのみ、空配列を返却）
     """
     try:
-        # ワークスペース共通クエリ（workspace_id フィルタなし）
-        query = db.collection(get_collection_name("attendance"))
+        # workspace_id に応じたコレクションにクエリ
+        query = db.collection(_get_attendance_collection(workspace_id))
 
         # emailが存在する場合は優先的に使用（複数デバイス・複数ワークスペースでの同一性確保）
         if email:
@@ -176,7 +198,7 @@ def delete_attendance_record_db(workspace_id: str, user_id: str, date: str) -> N
     """
     try:
         doc_id = f"{user_id}_{date}"
-        db.collection(get_collection_name("attendance")).document(doc_id).delete()
+        db.collection(_get_attendance_collection(workspace_id)).document(doc_id).delete()
         logger.info(f"Deleted attendance record: {doc_id}")
     except Exception as e:
         logger.error(f"Error deleting record: {e}", exc_info=True)
@@ -386,8 +408,8 @@ def get_today_records(workspace_id: str, date_str: Optional[str] = None) -> List
     try:
         target_date = date_str or datetime.datetime.now().strftime("%Y-%m-%d")
 
-        # 全ワークスペース共通で日付のみでクエリ
-        docs = db.collection(get_collection_name("attendance"))\
+        # workspace_id に応じたコレクションを日付でクエリ
+        docs = db.collection(_get_attendance_collection(workspace_id))\
                  .where("date", "==", target_date).stream()
 
         results = [d.to_dict() for d in docs]
@@ -436,8 +458,7 @@ def get_attendance_records_by_sections(
             logger.warning(f"Member count ({len(member_ids)}) exceeds Firestore IN clause limit (30). Truncating.")
             member_ids = member_ids[:30]
         
-        docs = db.collection(get_collection_name("attendance"))\
-                 .where("workspace_id", "==", workspace_id)\
+        docs = db.collection(_get_attendance_collection(workspace_id))\
                  .where("date", "==", target_date)\
                  .where("user_id", "in", member_ids)\
                  .stream()
