@@ -117,26 +117,42 @@ def save_attendance_record(
         logger.error(f"Error saving attendance record: {e}", exc_info=True)
         raise
 
-def get_single_attendance_record(workspace_id: str, user_id: str, date: str) -> Optional[Dict[str, Any]]:
+def get_single_attendance_record(
+    workspace_id: str,
+    user_id: str,
+    date: str,
+    email: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """
     特定の日付・ユーザーの勤怠記録を取得します。
+
+    user_id で検索し、見つからない場合は email で検索（別ワークスペースのユーザー対応）。
     
     Args:
         workspace_id: Slackワークスペースの一意ID
         user_id: SlackユーザーID
         date: 対象日（YYYY-MM-DD形式）
+        email: メールアドレス（user_id で見つからない場合のフォールバック用、任意）
         
     Returns:
         勤怠記録の辞書（存在しない場合はNone）
-        
-    Raises:
-        Exception: Firestore読み取りに失敗した場合（ログのみ、Noneを返却）
     """
     try:
         doc_id = f"{user_id}_{date}"
         doc = db.collection(_get_attendance_collection(workspace_id)).document(doc_id).get()
         if doc.exists:
             return doc.to_dict()
+        email_clean = (email or "").strip().lower()
+        if email_clean:
+            query = (
+                db.collection(_get_attendance_collection(workspace_id))
+                .where("email", "==", email_clean)
+                .limit(1)
+            )
+            for d in query.stream():
+                rec = d.to_dict()
+                if rec and (rec.get("date") or "") == date:
+                    return rec
         return None
     except Exception as e:
         logger.error(f"Error fetching single record: {e}", exc_info=True)

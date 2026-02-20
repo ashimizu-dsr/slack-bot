@@ -147,16 +147,20 @@ class AttendanceService:
         workspace_id: str, 
         user_id: str, 
         date: str, 
-        silent: bool = False
+        silent: bool = False,
+        email: Optional[str] = None,
     ) -> bool:
         """
         勤怠記録をFirestoreから削除します。
+
+        user_id で検索し、見つからない場合は email で検索（別ワークスペースのユーザー対応）。
         
         Args:
             workspace_id: Slackワークスペースの一意ID
             user_id: SlackユーザーID
             date: 対象日（YYYY-MM-DD形式）
             silent: Trueの場合、レコードが存在しなくてもエラーを発生させない
+            email: メールアドレス（user_id で見つからない場合のフォールバック用、任意）
             
         Returns:
             削除成功の場合True、失敗の場合False
@@ -164,7 +168,9 @@ class AttendanceService:
         Raises:
             ValidationError: レコードが存在せず、silentがFalseの場合
         """
-        existing = get_single_attendance_record(workspace_id, user_id, date)
+        existing = get_single_attendance_record(
+            workspace_id, user_id, date, email=email
+        )
         if not existing:
             if silent:
                 logger.info(f"削除対象が存在しません（silent=True）: User={user_id}, Date={date}")
@@ -173,10 +179,12 @@ class AttendanceService:
                 "削除対象が見つかりません", 
                 "⚠️ 削除対象の勤怠記録が見つかりません。"
             )
+        # 取得したレコードの user_id を使用（email で見つかった場合の doc_id 整合性）
+        record_user_id = existing.get("user_id") or user_id
 
         try:
-            delete_attendance_record_db(workspace_id, user_id, date)
-            logger.info(f"勤怠記録を削除しました: User={user_id}, Date={date}")
+            delete_attendance_record_db(workspace_id, record_user_id, date)
+            logger.info(f"勤怠記録を削除しました: User={record_user_id}, Date={date}")
             return True
         except Exception as e:
             logger.error(f"削除失敗: {e}", exc_info=True)
