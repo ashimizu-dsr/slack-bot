@@ -22,8 +22,7 @@ from resources.services.nlp_service import (
     extract_attendance_from_text,
     reply_has_explicit_cancellation_keywords,
     reply_has_late_cancellation_phrases,
-    resolve_target_user_for_cancellation,
-    should_cancel_without_ai,
+    is_before_9am,
 )
 from resources.shared.utils import get_user_email
 from resources.templates.modals import create_history_modal_view
@@ -403,61 +402,9 @@ class AttendanceListener(Listener):
             # target_user_id の厳格検証・users_info 確認は別途実施して誤割当を防止
             workspace_user_list = get_global_user_list()
 
-            # スレッド返信かどうかを判定（親メッセージの取得はまだ行わない）
+            # スレッド返信の場合は親メッセージを取得し「親＋子」をセットでAIに渡す
             thread_ts = event.get("thread_ts")
             is_thread_reply = bool(thread_ts and thread_ts != ts)
-
-            # 取消フレーズの事前チェック（AIスキップ）
-            # ・「間に合った/間に合いました」→ 時間・コンテキスト不問で常に取消
-            # ・スレッド返信かつ「出社した/出社しました」→ 取消
-            # ・スタンドアロンかつ「出社した/出社しました」かつ9時前 → 取消
-            # ※取消パスでは thread_context を使わないため、ここでは fetch_message_in_channel を呼ばない
-            if should_cancel_without_ai(text, ts, is_thread_reply=is_thread_reply):
-                target_user_id = resolve_target_user_for_cancellation(
-                    text, user_id, workspace_user_list or None
-                )
-                if target_user_id != user_id:
-                    logger.info(
-                        f"他者報告を検出（取消対象: {target_user_id}, 送信者: {user_id}）: text={text[:30]}..."
-                    )
-                else:
-                    logger.info(f"早朝出社報告を検出（AIスキップ・今日の記録を削除）: text={text[:30]}..., ts={ts}")
-                try:
-                    client.reactions_add(channel=channel, name="outbox_tray", timestamp=ts)
-                except Exception:
-                    pass
-                today_str = datetime.date.today().isoformat()
-                target_email = None
-                if workspace_user_list:
-                    matched_u = next(
-                        (u for u in workspace_user_list if (u.get("user_id") or "") == target_user_id),
-                        None,
-                    )
-                    if matched_u:
-                        target_email = (matched_u.get("email") or "").strip() or None
-                notification_service = NotificationService(client, self.attendance_service)
-                try:
-                    self.attendance_service.delete_attendance(team_id, target_user_id, today_str)
-                    notification_service.notify_attendance_change(
-                        record={"user_id": target_user_id, "date": today_str, "email": target_email},
-                        channel=channel,
-                        thread_ts=ts,
-                        is_delete=True
-                    )
-                except Exception as e:
-                    logger.info(f"早朝出社取消削除失敗/スキップ: {today_str}, Error: {e}")
-                    try:
-                        client.chat_postMessage(
-                            channel=channel,
-                            thread_ts=ts,
-                            text=f"⚠️ {today_str} の勤怠記録が見つかりませんでした。すでに取り消されているか、記録されていない可能性があります。"
-                        )
-                    except Exception:
-                        pass
-                return
-
-            # スレッド返信の場合は親メッセージを取得し「親＋子」をセットでAIに渡す
-            # （取消パスを抜けた後のみ呼び出す。T09R8SWTW49 の not_in_channel エラーを不要に発生させない）
             thread_context: Optional[str] = None
             if is_thread_reply:
                 parent_msg = fetch_message_in_channel(client, channel, thread_ts)
@@ -470,7 +417,7 @@ class AttendanceListener(Listener):
                 text,
                 team_id=team_id,
                 user_id=user_id,
-                message_ts=ts if thread_context else None,
+                message_ts=ts,
                 thread_context=thread_context,
                 workspace_user_list=workspace_user_list if workspace_user_list else None,
             )
@@ -550,8 +497,8 @@ class AttendanceListener(Listener):
 
                 # A. 削除アクション
                 if action == "delete":
-                    # スレッド返信時: 誤取消を防ぐガード（パターンA or パターンB のみ削除実行）
                     if thread_context:
+                        # スレッド返信: 明示的キーワードまたは遅刻取消フレーズがなければガード
                         pattern_a = reply_has_explicit_cancellation_keywords(text)
                         pattern_b = reply_has_late_cancellation_phrases(text)
                         if not pattern_a and not pattern_b:
@@ -566,6 +513,13 @@ class AttendanceListener(Listener):
                                 )
                             except Exception:
                                 pass
+                            continue
+                    else:
+                        # スタンドアロン: 明示的キーワードがなければ 9 時前のみ取消
+                        if not reply_has_explicit_cancellation_keywords(text) and not is_before_9am(ts):
+                            logger.info(
+                                f"出社/間に合い報告だが9時以降のため取消スキップ: ts={ts}, text={text[:30]}..."
+                            )
                             continue
                     try:
                         self.attendance_service.delete_attendance(team_id, effective_user_id, date)

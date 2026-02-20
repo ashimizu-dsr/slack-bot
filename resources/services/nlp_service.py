@@ -201,7 +201,9 @@ def extract_attendance_from_text(
             "   - Time details: ALWAYS include if mentioned (e.g., '10時出社', '11時から1時間中抜け')\n"
             "   - Secondary info: Put in parentheses (e.g., '体調不良（10時出社）', '在宅（昼休憩13:00〜14:00）')\n"
             "10. HEALTH: Format as '体調不良(症状/時間)'\n"
-            "11. CANCELLATION: Only '取消/キャンセル/取り消し/削除' -> action='delete'. '変更' is NOT cancellation.\n"
+            "11. CANCELLATION: '取消/キャンセル/取り消し/削除' -> action='delete'. "
+            "Also '間に合った/間に合いました/間に合ってます/間に合っています/間に合ってる' (made it in time despite lateness) -> action='delete'. "
+            "'変更' is NOT cancellation.\n"
             "12. TARGET PERSON: When the message clearly refers to ANOTHER person's attendance (e.g. '荒木課長 在宅', '荒木さんの勤怠'), set target_email to that person's email from the 'Workspace users' list. When the message is about the sender's own attendance, set target_email to null. Always use email (not user_id) for cross-workspace identity.\n\n"
 
             "STATUS:\n"
@@ -516,97 +518,12 @@ def is_early_morning_arrival(text: str, message_ts: str) -> bool:
         return False
 
 
-def resolve_target_user_for_cancellation(
-    text: str,
-    sender_user_id: str,
-    workspace_user_list: Optional[List[Dict[str, Any]]] = None,
-) -> str:
-    """
-    取消フレーズ（「間に合った」等）を含むメッセージから、取消対象のuser_idを解決する。
-
-    「Xさんは間に合った」「Xさんは間に合いました」のように第三者の名前が含まれる場合、
-    workspace_user_listから該当するuser_idを返す。名前が含まれない場合は送信者を返す。
-
-    Args:
-        text: メッセージテキスト
-        sender_user_id: メッセージ送信者のuser_id
-        workspace_user_list: ワークスペースユーザー一覧 [{ user_id, real_name, display_name }, ...]
-
-    Returns:
-        取消対象のuser_id（解決できなければ sender_user_id）
-    """
-    if not text or not isinstance(text, str):
-        return sender_user_id
-    if not workspace_user_list:
-        return sender_user_id
-
-    # パターン: Xさんは間に合った / Xさんは間に合いました
-    match = re.search(r"(.+?)さんは(?:間に合った|間に合いました)", text)
-    if not match:
-        return sender_user_id
-
-    name_part = match.group(1).strip()
-    if not name_part:
-        return sender_user_id
-
-    # workspace_user_list から名前で照合（real_name, display_name）
-    # 優先順位: 完全一致 > 先頭一致 > 包含
-    def normalize(s: str) -> str:
-        return (s or "").replace(" ", "").strip()
-
-    name_norm = normalize(name_part)
-    candidates: List[tuple] = []  # (priority, user_id)
-
-    for u in workspace_user_list:
-        uid = u.get("user_id") or ""
-        if not uid:
-            continue
-        rn = (u.get("real_name") or "").strip()
-        dn = (u.get("display_name") or "").strip()
-
-        rn_norm = normalize(rn)
-        dn_norm = normalize(dn)
-
-        if rn == name_part or dn == name_part:
-            candidates.append((0, uid))  # 完全一致
-        elif rn_norm == name_norm or dn_norm == name_norm:
-            candidates.append((1, uid))  # スペース除く完全一致
-        elif rn.startswith(name_part) or dn.startswith(name_part):
-            candidates.append((2, uid))  # 先頭一致
-        elif name_part in rn or name_part in dn:
-            candidates.append((3, uid))  # 包含
-
-    if not candidates:
-        return sender_user_id
-    candidates.sort(key=lambda x: x[0])
-    return candidates[0][1]
-
-
-def should_cancel_without_ai(text: str, message_ts: str, is_thread_reply: bool = False) -> bool:
-    """
-    AI呼び出しをスキップして直接取消処理すべきか判定する。
-
-    以下のいずれかの条件を満たす場合 True を返す:
-    1. 「間に合った/間に合いました」を含む（時間・コンテキスト不問）
-    2. スレッド返信かつ「出社した/出社しました」を含む
-    3. スタンドアロンかつ「出社した/出社しました」かつ9時前
-
-    Args:
-        text: ユーザーが投稿したメッセージテキスト
-        message_ts: SlackメッセージのUnixタイムスタンプ文字列
-        is_thread_reply: スレッド返信の場合 True
-
-    Returns:
-        AI不使用で直接取消とすべき場合は True、それ以外は False
-    """
-    if not text or not isinstance(text, str):
+def is_before_9am(message_ts: str) -> bool:
+    """メッセージ送信時刻が午前9時より前かどうか判定する。"""
+    try:
+        ts_float = float(message_ts)
+        msg_dt = datetime.datetime.fromtimestamp(ts_float)
+        cutoff = msg_dt.replace(hour=9, minute=0, second=0, microsecond=0)
+        return msg_dt < cutoff
+    except (ValueError, TypeError):
         return False
-    # パターン1: 「間に合った/間に合いました」→ 常に取消（時間・コンテキスト不問）
-    if any(p in text for p in ALWAYS_CANCEL_PHRASES):
-        return True
-    # パターン2 & 3: 「出社した/出社しました」→ コンテキスト依存
-    if any(p in text for p in ("出社した", "出社しました")):
-        if is_thread_reply:
-            return True
-        return is_early_morning_arrival(text, message_ts)
-    return False
