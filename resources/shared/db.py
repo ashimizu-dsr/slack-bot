@@ -74,8 +74,8 @@ def save_attendance_record(
         Exception: Firestore書き込みに失敗した場合
     """
     try:
-        # ドキュメントID: {workspace_id}_{user_id}_{date}
-        doc_id = f"{workspace_id}_{user_id}_{date}"
+        # ドキュメントID: {user_id}_{date}（ワークスペース共通）
+        doc_id = f"{user_id}_{date}"
         doc_ref = db.collection(get_collection_name("attendance")).document(doc_id)
         
         data = {
@@ -111,7 +111,7 @@ def get_single_attendance_record(workspace_id: str, user_id: str, date: str) -> 
         Exception: Firestore読み取りに失敗した場合（ログのみ、Noneを返却）
     """
     try:
-        doc_id = f"{workspace_id}_{user_id}_{date}"
+        doc_id = f"{user_id}_{date}"
         doc = db.collection(get_collection_name("attendance")).document(doc_id).get()
         if doc.exists:
             return doc.to_dict()
@@ -142,10 +142,10 @@ def get_user_history_from_db(
         Exception: Firestore読み取りに失敗した場合（ログのみ、空配列を返却）
     """
     try:
-        # workspace_idでフィルタリングを開始
-        query = db.collection(get_collection_name("attendance")).where("workspace_id", "==", workspace_id)
-        
-        # emailが存在する場合は優先的に使用（複数デバイスでの同一性確保）
+        # ワークスペース共通クエリ（workspace_id フィルタなし）
+        query = db.collection(get_collection_name("attendance"))
+
+        # emailが存在する場合は優先的に使用（複数デバイス・複数ワークスペースでの同一性確保）
         if email:
             docs = query.where("email", "==", email).stream()
         else:
@@ -175,7 +175,7 @@ def delete_attendance_record_db(workspace_id: str, user_id: str, date: str) -> N
         Exception: Firestore削除に失敗した場合
     """
     try:
-        doc_id = f"{workspace_id}_{user_id}_{date}"
+        doc_id = f"{user_id}_{date}"
         db.collection(get_collection_name("attendance")).document(doc_id).delete()
         logger.info(f"Deleted attendance record: {doc_id}")
     except Exception as e:
@@ -227,6 +227,36 @@ def get_workspace_user_list(team_id: str) -> List[Dict[str, Any]]:
         return data.get("users") or []
     except Exception as e:
         logger.error(f"Error fetching workspace user list: {e}", exc_info=True)
+        return []
+
+
+def get_global_user_list() -> List[Dict[str, Any]]:
+    """
+    全ワークスペースのユーザーリストを統合して返します。
+
+    各ワークスペースの workspace_users ドキュメントを横断的に取得し、
+    email をキーに重複排除した上でマージします。
+    emailがない場合は user_id で重複排除します。
+
+    Returns:
+        [{ user_id, email, real_name, display_name }, ...]
+    """
+    try:
+        docs = db.collection(get_collection_name("workspace_users")).stream()
+        seen: Dict[str, Dict[str, Any]] = {}  # email or user_id -> user entry
+        for doc in docs:
+            data = doc.to_dict() or {}
+            for user in data.get("users") or []:
+                email = (user.get("email") or "").strip().lower()
+                uid = user.get("user_id") or ""
+                key = email if email else uid
+                if key and key not in seen:
+                    seen[key] = user
+        result = list(seen.values())
+        logger.info(f"get_global_user_list: merged {len(result)} unique users from all workspaces")
+        return result
+    except Exception as e:
+        logger.error(f"Error fetching global user list: {e}", exc_info=True)
         return []
 
 
@@ -355,14 +385,13 @@ def get_today_records(workspace_id: str, date_str: Optional[str] = None) -> List
     """
     try:
         target_date = date_str or datetime.datetime.now().strftime("%Y-%m-%d")
-        
-        # workspace_idとdateの複合クエリ
+
+        # 全ワークスペース共通で日付のみでクエリ
         docs = db.collection(get_collection_name("attendance"))\
-                 .where("workspace_id", "==", workspace_id)\
                  .where("date", "==", target_date).stream()
-        
+
         results = [d.to_dict() for d in docs]
-        logger.info(f"Retrieved {len(results)} records for {target_date} in workspace {workspace_id}")
+        logger.info(f"Retrieved {len(results)} records for {target_date} (all workspaces)")
         return results
     except Exception as e:
         logger.error(f"Error fetching today's records: {e}", exc_info=True)

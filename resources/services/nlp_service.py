@@ -143,9 +143,14 @@ def extract_attendance_from_text(
         logger.warning("AI抽出がスキップされました（API_KEYまたはテキストが空）")
         return None
 
+    # 【メンション削除前処理】
+    # <@UXXXXXXXX> 形式のSlackメンションを削除してAIの誤認（メンションされた人の勤怠と誤解）を防ぐ
+    clean_text = re.sub(r'<@[A-Z0-9]+>', '', text).strip()
+    if thread_context:
+        thread_context = re.sub(r'<@[A-Z0-9]+>', '', thread_context).strip()
+
     # 【打ち消し線の前処理】
     # Slackの ~text~ 記法を AIが理解しやすい形式に変換
-    clean_text = text
     clean_text = re.sub(r'~(.*?)~', r'(strike-through: \1)', clean_text)
     if thread_context:
         thread_context = re.sub(r'~(.*?)~', r'(strike-through: \1)', thread_context)
