@@ -125,7 +125,7 @@ def extract_attendance_from_text(
             "status": "late" など,
             "note": "備考",
             "action": "save" または "delete",
-            "target_user_id": "Slack user_id または None（誰の勤怠か。省略時は送信者本人）",
+            "target_email": "email または None（誰の勤怠か。省略時は送信者本人。email を主キーとして使用）",
             "_additional_attendances": [...] (複数日の場合)
         }
         抽出できない場合はNone
@@ -175,7 +175,8 @@ def extract_attendance_from_text(
         # システム指示の定義（最新ルール 2026-01-28: 実例ベース最適化版 + target_user_id）
         system_instruction = (
             "You are an attendance data extractor. Output JSON only.\n"
-            "Format: {\"is_attendance\": bool, \"target_user_id\": \"Slack user_id or null\", \"attendances\": [{\"date\": \"YYYY-MM-DD\", \"status\": \"string\", \"note\": \"string\", \"action\": \"save\"|\"delete\"}]}\n\n"
+            "Format: {\"is_attendance\": bool, \"target_email\": \"email or null\", \"attendances\": [{\"date\": \"YYYY-MM-DD\", \"status\": \"string\", \"note\": \"string\", \"action\": \"save\"|\"delete\"}]}\n\n"
+            "Use target_email (not target_user_id). Email is the primary identifier for cross-workspace users.\n\n"
 
             "CORE RULES:\n"
             "1. PLAIN '出社': If message says just '出社' (e.g., '1/26...出社') -> action='delete' (returning to normal work)\n"
@@ -201,7 +202,7 @@ def extract_attendance_from_text(
             "   - Secondary info: Put in parentheses (e.g., '体調不良（10時出社）', '在宅（昼休憩13:00〜14:00）')\n"
             "10. HEALTH: Format as '体調不良(症状/時間)'\n"
             "11. CANCELLATION: Only '取消/キャンセル/取り消し/削除' -> action='delete'. '変更' is NOT cancellation.\n"
-            "12. TARGET PERSON: When the message clearly refers to ANOTHER person's attendance (e.g. '荒木課長 在宅', '荒木さんの勤怠'), set target_user_id to that person's user_id from the 'Workspace users' list. When the message is about the sender's own attendance, set target_user_id to null.\n\n"
+            "12. TARGET PERSON: When the message clearly refers to ANOTHER person's attendance (e.g. '荒木課長 在宅', '荒木さんの勤怠'), set target_email to that person's email from the 'Workspace users' list. When the message is about the sender's own attendance, set target_email to null. Always use email (not user_id) for cross-workspace identity.\n\n"
 
             "STATUS:\n"
             "- vacation/vacation_am/vacation_pm/vacation_hourly: Leave\n"
@@ -370,15 +371,15 @@ def extract_attendance_from_text(
         else:
             user_content = f"Today: {base_date} ({base_date.strftime('%A')})\nText: {clean_text}"
 
-        # ワークスペースユーザー一覧を渡す場合（誰の勤怠かを判定するため）
+        # ワークスペースユーザー一覧を渡す場合（誰の勤怠かを判定するため。email を主キーとして使用）
         if workspace_user_list:
-            lines = ["Workspace users (use exact user_id for target_user_id when message is for someone else):"]
+            lines = ["Workspace users (use exact email for target_email when message is for someone else):"]
             for u in workspace_user_list:
-                uid = u.get("user_id") or ""
+                em = (u.get("email") or "").strip()
                 rn = (u.get("real_name") or "").strip()
                 dn = (u.get("display_name") or "").strip()
-                em = (u.get("email") or "").strip()
-                lines.append(f"  {uid}: {rn} ({dn}) / {em}")
+                if em:
+                    lines.append(f"  {em}: {rn} ({dn})")
             user_content = user_content + "\n\n" + "\n".join(lines)
 
         messages = [
@@ -441,9 +442,9 @@ def extract_attendance_from_text(
         if len(results) > 1:
             final_result["_additional_attendances"] = results[1:]
 
-        # 誰の勤怠か（メッセージ内に他人の名前がある場合にAIが設定）
-        raw_target = data.get("target_user_id")
-        final_result["target_user_id"] = (raw_target if raw_target and str(raw_target).strip() else None)
+        # 誰の勤怠か（メッセージ内に他人の名前がある場合にAIが設定。email を主キーとして使用）
+        raw_email = data.get("target_email")
+        final_result["target_email"] = (raw_email if raw_email and str(raw_email).strip() else None)
 
         logger.info(f"AI抽出成功: {len(results)}件の勤怠情報を抽出")
         return final_result

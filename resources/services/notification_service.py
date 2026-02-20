@@ -51,19 +51,12 @@ class NotificationService:
     ) -> Optional[str]:
         """
         グローバルユーザーリストから表示名を解決。
-        user_id で照合し、見つからない場合は email で照合（別ワークスペースのユーザー対応）。
+        email を優先（別ワークスペースにいないユーザーは user_id で取れないため）。
         """
         try:
             from resources.shared.db import get_global_user_list
             users = get_global_user_list()
-            # 1. user_id で照合
-            for u in users:
-                if (u.get("user_id") or "") == clean_uid:
-                    resolved = (u.get("display_name") or u.get("real_name") or "").strip()
-                    if resolved:
-                        logger.info(f"グローバルユーザーリストから名前解決(user_id): {clean_uid} -> {resolved}")
-                        return resolved
-            # 2. 見つからない場合、email で照合（このワークスペースにいないユーザー対応）
+            # 1. email を優先（このワークスペースにいないユーザーは users_info で取れない）
             if email:
                 email_clean = (email or "").strip().lower()
                 if email_clean:
@@ -74,6 +67,13 @@ class NotificationService:
                             if resolved:
                                 logger.info(f"グローバルユーザーリストから名前解決(email): {email_clean} -> {resolved}")
                                 return resolved
+            # 2. user_id で照合（email がない場合のフォールバック）
+            for u in users:
+                if (u.get("user_id") or "") == clean_uid:
+                    resolved = (u.get("display_name") or u.get("real_name") or "").strip()
+                    if resolved:
+                        logger.info(f"グローバルユーザーリストから名前解決(user_id): {clean_uid} -> {resolved}")
+                        return resolved
         except Exception as e:
             logger.warning(f"グローバルユーザーリストからの名前解決失敗: {e}")
         return None
@@ -96,6 +96,11 @@ class NotificationService:
             表示名。取得失敗時は user_id または「（ユーザー情報を取得できません）」
         """
         clean_uid = user_id.replace("<@", "").replace(">", "").split("|")[0] if user_id else ""
+        # email がある場合は先にユーザーリストで解決（別ワークスペースのユーザーは users_info で取れない）
+        if email:
+            resolved = self._resolve_from_global_list(clean_uid, email)
+            if resolved:
+                return resolved
         name = self.slack_wrapper.fetch_user_display_name(user_id)
 
         # user_not_found 等で None が返った場合
