@@ -104,19 +104,31 @@ class AttendanceListener(Listener):
 
             try:
                 dynamic_client = get_slack_client(team_id)
-                record = get_single_attendance_record(team_id, user_id, date)
-                
-                # 本人チェック
-                if record and record.get("user_id") != user_id:
-                    dynamic_client.chat_postEphemeral(
-                        channel=channel_id,
-                        user=user_id,
-                        text="⚠️ この操作は打刻した本人しか行えません。"
+                user_email = None
+                if ul := get_global_user_list():
+                    mu = next(
+                        (u for u in ul if (u.get("user_id") or "") == user_id),
+                        None,
                     )
-                    logger.warning(
-                        f"権限エラー: User {user_id} が User {record.get('user_id')} の記録を編集しようとしました"
-                    )
-                    return
+                    if mu:
+                        user_email = (mu.get("email") or "").strip() or None
+                record = get_single_attendance_record(
+                    team_id, user_id, date, email=user_email
+                )
+                if record:
+                    rid = record.get("user_id") or ""
+                    rem = (record.get("email") or "").strip().lower()
+                    uem = (user_email or "").strip().lower()
+                    if rid != user_id and (not uem or rem != uem):
+                        dynamic_client.chat_postEphemeral(
+                            channel=channel_id,
+                            user=user_id,
+                            text="⚠️ この操作は打刻した本人しか行えません。"
+                        )
+                        logger.warning(
+                            f"権限エラー: User {user_id} が User {rid} の記録を編集しようとしました"
+                        )
+                        return
 
                 private_metadata = json.dumps({
                     "date": date,
@@ -158,25 +170,38 @@ class AttendanceListener(Listener):
 
             try:
                 dynamic_client = get_slack_client(team_id)
-                record = get_single_attendance_record(team_id, user_id, date)
+                user_email = None
+                if ul := get_global_user_list():
+                    mu = next((u for u in ul if (u.get("user_id") or "") == user_id), None)
+                    if mu:
+                        user_email = (mu.get("email") or "").strip() or None
+                record = get_single_attendance_record(
+                    team_id, user_id, date, email=user_email
+                )
                 
-                if record and record.get("user_id") != user_id:
-                    dynamic_client.chat_postEphemeral(
-                        channel=channel_id, 
-                        user=user_id, 
-                        text="⚠️ 本人のみ取消可能です。"
-                    )
-                    logger.warning(
-                        f"権限エラー: User {user_id} が User {record.get('user_id')} の記録を削除しようとしました"
-                    )
-                    return
+                if record:
+                    rid = record.get("user_id") or ""
+                    rem = (record.get("email") or "").strip().lower()
+                    uem = (user_email or "").strip().lower()
+                    if rid != user_id and (not uem or rem != uem):
+                        dynamic_client.chat_postEphemeral(
+                            channel=channel_id,
+                            user=user_id,
+                            text="⚠️ 本人のみ取消可能です。"
+                        )
+                        logger.warning(
+                            f"権限エラー: User {user_id} が User {rid} の記録を削除しようとしました"
+                        )
+                        return
 
-                view = create_attendance_delete_confirm_modal(date) 
+                view = create_attendance_delete_confirm_modal(date)
                 view["callback_id"] = "delete_attendance_confirm_callback"
                 view["private_metadata"] = json.dumps({
                     "date": date,
                     "message_ts": body["container"]["message_ts"],
-                    "channel_id": channel_id
+                    "channel_id": channel_id,
+                    "user_id": user_id,
+                    "email": user_email or "",
                 })
                 dynamic_client.views_open(trigger_id=trigger_id, view=view)
             except Exception as e:
@@ -406,11 +431,19 @@ class AttendanceListener(Listener):
                 except Exception:
                     pass
                 today_str = datetime.date.today().isoformat()
+                target_email = None
+                if workspace_user_list:
+                    matched_u = next(
+                        (u for u in workspace_user_list if (u.get("user_id") or "") == target_user_id),
+                        None,
+                    )
+                    if matched_u:
+                        target_email = (matched_u.get("email") or "").strip() or None
                 notification_service = NotificationService(client, self.attendance_service)
                 try:
                     self.attendance_service.delete_attendance(team_id, target_user_id, today_str)
                     notification_service.notify_attendance_change(
-                        record={"user_id": target_user_id, "date": today_str},
+                        record={"user_id": target_user_id, "date": today_str, "email": target_email},
                         channel=channel,
                         thread_ts=ts,
                         is_delete=True
@@ -555,7 +588,7 @@ class AttendanceListener(Listener):
                     try:
                         self.attendance_service.delete_attendance(team_id, effective_user_id, date)
                         notification_service.notify_attendance_change(
-                            record={"user_id": effective_user_id, "date": date},
+                            record={"user_id": effective_user_id, "date": date, "email": effective_email},
                             channel=channel,
                             thread_ts=ts,
                             is_delete=True
@@ -600,12 +633,16 @@ class AttendanceListener(Listener):
         """勤怠削除の非同期処理"""
         user_id = body["user"]["id"]
         metadata = json.loads(view.get("private_metadata", "{}"))
+        date_val = metadata.get("date", "")
+        user_email = (metadata.get("email") or "").strip() or None
 
         try:
             client = get_slack_client(team_id)
-            
-            # 削除実行
-            self.attendance_service.delete_attendance(team_id, user_id, metadata["date"])
+
+            # 削除実行（email で検索フォールバック、別ワークスペースのユーザー対応）
+            self.attendance_service.delete_attendance(
+                team_id, user_id, date_val, email=user_email
+            )
             
             # 元のメッセージを更新
             client.chat_update(
@@ -624,12 +661,12 @@ class AttendanceListener(Listener):
             # 削除通知を送信（スレッド返信として）
             notification_service = NotificationService(client, self.attendance_service)
             notification_service.notify_attendance_change(
-                record={"user_id": user_id, "date": metadata["date"]},
+                record={"user_id": user_id, "date": date_val, "email": user_email},
                 channel=metadata["channel_id"],
                 thread_ts=metadata["message_ts"],
                 is_delete=True
             )
-            
-            logger.info(f"削除成功（非同期）: User={user_id}, Date={metadata['date']}")
+
+            logger.info(f"削除成功（非同期）: User={user_id}, Date={date_val}")
         except Exception as e:
             logger.error(f"取消処理失敗: {e}", exc_info=True)

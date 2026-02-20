@@ -46,16 +46,51 @@ class NotificationService:
     # ==========================================
     # 名前解決（内部メソッド）
     # ==========================================
-    def fetch_user_display_name(self, user_id: str) -> str:
+    def _resolve_from_global_list(
+        self, clean_uid: str, email: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        グローバルユーザーリストから表示名を解決。
+        user_id で照合し、見つからない場合は email で照合（別ワークスペースのユーザー対応）。
+        """
+        try:
+            from resources.shared.db import get_global_user_list
+            users = get_global_user_list()
+            # 1. user_id で照合
+            for u in users:
+                if (u.get("user_id") or "") == clean_uid:
+                    resolved = (u.get("display_name") or u.get("real_name") or "").strip()
+                    if resolved:
+                        logger.info(f"グローバルユーザーリストから名前解決(user_id): {clean_uid} -> {resolved}")
+                        return resolved
+            # 2. 見つからない場合、email で照合（このワークスペースにいないユーザー対応）
+            if email:
+                email_clean = (email or "").strip().lower()
+                if email_clean:
+                    for u in users:
+                        u_email = (u.get("email") or "").strip().lower()
+                        if u_email == email_clean:
+                            resolved = (u.get("display_name") or u.get("real_name") or "").strip()
+                            if resolved:
+                                logger.info(f"グローバルユーザーリストから名前解決(email): {email_clean} -> {resolved}")
+                                return resolved
+        except Exception as e:
+            logger.warning(f"グローバルユーザーリストからの名前解決失敗: {e}")
+        return None
+
+    def fetch_user_display_name(
+        self, user_id: str, email: Optional[str] = None
+    ) -> str:
         """
         ユーザーIDから表示名を取得します。
 
         まず Slack API で取得を試み、失敗した場合（user_not_found 等）は
-        Firestore のグローバルユーザーリストで同一 user_id のみ照合します。
+        Firestore のグローバルユーザーリストで user_id、続いて email で照合します。
         他ユーザーの情報を返すことはありません。
 
         Args:
             user_id: SlackユーザーID
+            email: メールアドレス（別ワークスペースのユーザー検索用、任意）
 
         Returns:
             表示名。取得失敗時は user_id または「（ユーザー情報を取得できません）」
@@ -65,31 +100,16 @@ class NotificationService:
 
         # user_not_found 等で None が返った場合
         if name is None:
-            try:
-                from resources.shared.db import get_global_user_list
-                for u in get_global_user_list():
-                    if u.get("user_id") == clean_uid:
-                        resolved = (u.get("display_name") or u.get("real_name") or "").strip()
-                        if resolved:
-                            logger.info(f"グローバルユーザーリストから名前解決: {clean_uid} -> {resolved}")
-                            return resolved
-            except Exception as e:
-                logger.warning(f"グローバルユーザーリストからの名前解決失敗: {e}")
+            resolved = self._resolve_from_global_list(clean_uid, email)
+            if resolved:
+                return resolved
             return clean_uid if clean_uid else "（ユーザー情報を取得できません）"
 
         # Slack API が user_id をそのまま返した場合のフォールバック
-        # 重要: u.get("user_id") == clean_uid の照合のみ。他ユーザーを返さない。
         if name == clean_uid:
-            try:
-                from resources.shared.db import get_global_user_list
-                for u in get_global_user_list():
-                    if u.get("user_id") == clean_uid:
-                        resolved = (u.get("display_name") or u.get("real_name") or "").strip()
-                        if resolved:
-                            logger.info(f"グローバルユーザーリストから名前解決: {clean_uid} -> {resolved}")
-                            return resolved
-            except Exception as e:
-                logger.warning(f"グローバルユーザーリストからの名前解決失敗: {e}")
+            resolved = self._resolve_from_global_list(clean_uid, email)
+            if resolved:
+                return resolved
 
         return name
 
@@ -120,11 +140,12 @@ class NotificationService:
             整形済みの名前をView層（build_attendance_card）に渡します。
         """
         try:
-            # ユーザーIDを取得
+            # ユーザーID・emailを取得（email は別ワークスペースのユーザー検索用）
             user_id = record.user_id if hasattr(record, 'user_id') else record.get('user_id')
+            email = record.email if hasattr(record, 'email') else record.get('email')
             
-            # 【重要】名前を必ず解決してから View層に渡す
-            display_name = self.fetch_user_display_name(user_id)
+            # 【重要】名前を必ず解決してから View層に渡す（user_id + email で検索）
+            display_name = self.fetch_user_display_name(user_id, email=email)
             
             # 1. 削除通知の場合
             if is_delete:
