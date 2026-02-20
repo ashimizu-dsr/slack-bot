@@ -131,13 +131,16 @@ class NotificationService:
                 date_val = record.date if hasattr(record, 'date') else record.get('date')
                 blocks = build_delete_notification(display_name, date_val)
                 
-                self.slack_wrapper.send_message(
+                result = self.slack_wrapper.send_message(
                     channel=channel,
                     blocks=blocks,
                     text=f"勤怠連絡を取り消しました: {date_val}",
                     thread_ts=thread_ts
                 )
-                logger.info(f"削除通知を送信しました: User={user_id}, Date={date_val}")
+                if result and result.get("ok"):
+                    logger.info(f"削除通知を送信しました: User={user_id}, Date={date_val}")
+                else:
+                    logger.warning(f"削除通知の送信に失敗しました: User={user_id}, Date={date_val}")
                 return
 
             # 2. 記録・更新通知の場合
@@ -151,14 +154,19 @@ class NotificationService:
             date_val = record.date if hasattr(record, 'date') else record.get('date')
             text = "勤怠記録を更新しました" if is_update else "勤怠を記録しました"
             
-            self.slack_wrapper.send_message(
+            result = self.slack_wrapper.send_message(
                 channel=channel,
                 blocks=blocks,
                 text=text,
                 thread_ts=thread_ts
             )
             
-            logger.info(f"勤怠カードを送信しました: User={user_id}, Date={date_val}, Update={is_update}")
+            if result and result.get("ok"):
+                logger.info(f"勤怠カードを送信しました: User={user_id}, Date={date_val}, Update={is_update}")
+            else:
+                logger.warning(
+                    f"勤怠カードの送信に失敗しました（not_in_channel 等）: User={user_id}, Date={date_val}"
+                )
             
         except Exception as e:
             logger.error(f"通知送信失敗: {e}", exc_info=True)
