@@ -65,7 +65,7 @@ from slack_sdk import WebClient
 
 # OAuth関連
 from slack_bolt.oauth.oauth_settings import OAuthSettings
-from slack_bolt.oauth.callback_options import CallbackOptions, FailureArgs, SuccessArgs, DefaultCallbackOptions
+from slack_bolt.oauth.callback_options import CallbackOptions, FailureArgs, SuccessArgs
 from slack_bolt.response import BoltResponse
 from slack_sdk.oauth.installation_store import InstallationStore, Installation, Bot
 
@@ -354,7 +354,7 @@ if enable_oauth:
                     "users:read.email", "mpim:read",
                 ],
                 installation_store=FirestoreInstallationStore(db_client),
-                callback_options=CallbackOptions(success=DefaultCallbackOptions.success, failure=custom_failure_handler)
+                callback_options=CallbackOptions(success=custom_success_handler, failure=custom_failure_handler)
             )
             logger.info("✅ OAuth settings configured successfully")
         except Exception as e:
