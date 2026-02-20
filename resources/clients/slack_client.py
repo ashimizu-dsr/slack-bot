@@ -132,7 +132,7 @@ class SlackClientWrapper:
         """
         self.client = client
     
-    def fetch_user_display_name(self, user_id: str) -> str:
+    def fetch_user_display_name(self, user_id: str) -> Optional[str]:
         """
         ユーザーIDから表示名を取得します。
         
@@ -140,7 +140,8 @@ class SlackClientWrapper:
             user_id: SlackユーザーID（<@U...>形式も自動クレンジング）
             
         Returns:
-            表示名（優先順位: display_name > real_name > user_id）
+            表示名（優先順位: display_name > real_name > user_id）。
+            user_not_found 等で取得失敗時は None を返す（他ユーザーを返さない）。
             
         Note:
             メンション形式（<@U123|name>）が渡された場合も正しく処理されます。
@@ -154,7 +155,10 @@ class SlackClientWrapper:
             # 2. Slack API呼び出し
             res = self.client.users_info(user=clean_user_id)
             if not res.get("ok"):
-                logger.warning(f"Slack API response not OK for user {clean_user_id}")
+                err = res.get("error", "")
+                logger.warning(f"Slack API response not OK for user {clean_user_id}, error={err}")
+                if err == "user_not_found":
+                    return None
                 return clean_user_id
 
             user_data = res.get("user", {})
@@ -174,8 +178,7 @@ class SlackClientWrapper:
             
         except Exception as e:
             logger.error(f"ユーザー名取得失敗: {user_id}, {e}", exc_info=True)
-            # エラー時も極力 @ 抜きを返す
-            return user_id.replace("<@", "").replace(">", "").split("|")[0] if user_id else "Unknown"
+            return None
     
     def fetch_user_name_map(self, user_ids: List[str]) -> Dict[str, str]:
         """
@@ -191,7 +194,7 @@ class SlackClientWrapper:
         for uid in user_ids:
             try:
                 name = self.fetch_user_display_name(uid)
-                user_name_map[uid] = name
+                user_name_map[uid] = name if name is not None else uid
             except Exception as e:
                 logger.warning(f"ユーザー名取得失敗: {uid}, Error: {e}")
                 user_name_map[uid] = uid

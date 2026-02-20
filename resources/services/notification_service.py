@@ -50,19 +50,35 @@ class NotificationService:
         """
         ユーザーIDから表示名を取得します。
 
-        まず Slack API で取得を試み、失敗した場合（別ワークスペースのユーザー等）は
-        Firestore の全ワークスペース統合ユーザーリストにフォールバックします。
+        まず Slack API で取得を試み、失敗した場合（user_not_found 等）は
+        Firestore のグローバルユーザーリストで同一 user_id のみ照合します。
+        他ユーザーの情報を返すことはありません。
 
         Args:
             user_id: SlackユーザーID
 
         Returns:
-            表示名（優先順位: display_name > real_name > user_id）
+            表示名。取得失敗時は user_id または「（ユーザー情報を取得できません）」
         """
         clean_uid = user_id.replace("<@", "").replace(">", "").split("|")[0] if user_id else ""
         name = self.slack_wrapper.fetch_user_display_name(user_id)
 
-        # Slack API が user_id をそのまま返した場合はフォールバック
+        # user_not_found 等で None が返った場合
+        if name is None:
+            try:
+                from resources.shared.db import get_global_user_list
+                for u in get_global_user_list():
+                    if u.get("user_id") == clean_uid:
+                        resolved = (u.get("display_name") or u.get("real_name") or "").strip()
+                        if resolved:
+                            logger.info(f"グローバルユーザーリストから名前解決: {clean_uid} -> {resolved}")
+                            return resolved
+            except Exception as e:
+                logger.warning(f"グローバルユーザーリストからの名前解決失敗: {e}")
+            return clean_uid if clean_uid else "（ユーザー情報を取得できません）"
+
+        # Slack API が user_id をそのまま返した場合のフォールバック
+        # 重要: u.get("user_id") == clean_uid の照合のみ。他ユーザーを返さない。
         if name == clean_uid:
             try:
                 from resources.shared.db import get_global_user_list

@@ -29,7 +29,7 @@ from resources.shared.utils import get_user_email
 from resources.templates.modals import create_history_modal_view
 from resources.clients.slack_client import get_slack_client, fetch_message_in_channel
 from resources.services.notification_service import NotificationService
-from resources.shared.db import get_single_attendance_record, get_global_user_list
+from resources.shared.db import get_single_attendance_record, get_global_user_list, get_workspace_user_list
 from resources.templates.modals import (
     create_attendance_modal_view,
     create_attendance_delete_confirm_modal
@@ -374,7 +374,9 @@ class AttendanceListener(Listener):
         try:
             client = get_slack_client(team_id)
             sender_email: Optional[str] = get_user_email(client, user_id, logger)
-            workspace_user_list = get_global_user_list()
+            workspace_user_list = get_workspace_user_list(team_id)
+            if not workspace_user_list:
+                workspace_user_list = get_global_user_list()
 
             # スレッド返信の場合は親メッセージを取得し「親＋子」をセットでAIに渡す
             thread_context: Optional[str] = None
@@ -456,17 +458,67 @@ class AttendanceListener(Listener):
 
             # 2. 誰の勤怠として記録するか（メッセージ内の人名 → target_user_id）
             target_user_id = extraction.get("target_user_id")
-            if target_user_id and workspace_user_list:
+            if target_user_id:
+                if not workspace_user_list:
+                    logger.warning("target_user_id が指定されましたが workspace_user_list が空のため検証できません。記録を中断")
+                    try:
+                        client.chat_postEphemeral(
+                            channel=channel,
+                            user=user_id,
+                            text="⚠️ メッセージ内の対象ユーザーを特定できませんでした。記録を中断しました。"
+                        )
+                    except Exception:
+                        pass
+                    return
                 matched = next((u for u in workspace_user_list if (u.get("user_id") or "") == target_user_id), None)
                 if matched:
                     effective_user_id = matched["user_id"]
                     effective_email = (matched.get("email") or "").strip() or get_user_email(client, effective_user_id, logger)
+                    is_other_person = True
                 else:
-                    effective_user_id = user_id
-                    effective_email = sender_email
+                    logger.warning(
+                        f"target_user_id がワークスペースに存在しません: {target_user_id}, 記録を中断"
+                    )
+                    try:
+                        client.chat_postEphemeral(
+                            channel=channel,
+                            user=user_id,
+                            text="⚠️ メッセージ内の対象ユーザーを特定できませんでした。ユーザーがこのワークスペースに存在しないか、取得できない状態です。記録を中断しました。"
+                        )
+                    except Exception:
+                        pass
+                    return
             else:
                 effective_user_id = user_id
                 effective_email = sender_email
+                is_other_person = False
+
+            # 2b. 他者勤怠の場合は Slack API でユーザー存在確認（user_not_found 時は中断）
+            if is_other_person:
+                try:
+                    res = client.users_info(user=effective_user_id)
+                    if not res.get("ok") or res.get("error") == "user_not_found":
+                        logger.warning(f"users_info 失敗（user_not_found 等）: {effective_user_id}")
+                        try:
+                            client.chat_postEphemeral(
+                                channel=channel,
+                                user=user_id,
+                                text="⚠️ 対象ユーザーの情報を取得できませんでした。記録を中断しました。"
+                            )
+                        except Exception:
+                            pass
+                        return
+                except Exception as e:
+                    logger.warning(f"users_info 呼び出し失敗: {effective_user_id}, {e}")
+                    try:
+                        client.chat_postEphemeral(
+                            channel=channel,
+                            user=user_id,
+                            text="⚠️ 対象ユーザーの確認に失敗しました。記録を中断しました。"
+                        )
+                    except Exception:
+                        pass
+                    return
 
             # 3. 抽出結果をリスト化（複数日対応）
             attendances = [extraction]
