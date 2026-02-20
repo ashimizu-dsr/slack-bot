@@ -403,20 +403,16 @@ class AttendanceListener(Listener):
             # target_user_id の厳格検証・users_info 確認は別途実施して誤割当を防止
             workspace_user_list = get_global_user_list()
 
-            # スレッド返信の場合は親メッセージを取得し「親＋子」をセットでAIに渡す
-            thread_context: Optional[str] = None
+            # スレッド返信かどうかを判定（親メッセージの取得はまだ行わない）
             thread_ts = event.get("thread_ts")
-            if thread_ts and thread_ts != ts:
-                parent_msg = fetch_message_in_channel(client, channel, thread_ts)
-                parent_text = (parent_msg.get("text") or "").strip() if parent_msg else ""
-                thread_context = f"親メッセージ:\n{parent_text}\n\n返信:\n{text}"
-                logger.info(f"スレッド返信を検出: 親+子をセットでAIに渡します thread_ts={thread_ts}")
+            is_thread_reply = bool(thread_ts and thread_ts != ts)
 
             # 取消フレーズの事前チェック（AIスキップ）
             # ・「間に合った/間に合いました」→ 時間・コンテキスト不問で常に取消
             # ・スレッド返信かつ「出社した/出社しました」→ 取消
             # ・スタンドアロンかつ「出社した/出社しました」かつ9時前 → 取消
-            if should_cancel_without_ai(text, ts, is_thread_reply=bool(thread_context)):
+            # ※取消パスでは thread_context を使わないため、ここでは fetch_message_in_channel を呼ばない
+            if should_cancel_without_ai(text, ts, is_thread_reply=is_thread_reply):
                 target_user_id = resolve_target_user_for_cancellation(
                     text, user_id, workspace_user_list or None
                 )
@@ -459,6 +455,15 @@ class AttendanceListener(Listener):
                     except Exception:
                         pass
                 return
+
+            # スレッド返信の場合は親メッセージを取得し「親＋子」をセットでAIに渡す
+            # （取消パスを抜けた後のみ呼び出す。T09R8SWTW49 の not_in_channel エラーを不要に発生させない）
+            thread_context: Optional[str] = None
+            if is_thread_reply:
+                parent_msg = fetch_message_in_channel(client, channel, thread_ts)
+                parent_text = (parent_msg.get("text") or "").strip() if parent_msg else ""
+                thread_context = f"親メッセージ:\n{parent_text}\n\n返信:\n{text}"
+                logger.info(f"スレッド返信を検出: 親+子をセットでAIに渡します thread_ts={thread_ts}")
 
             # 1. AI解析実行（誰の勤怠かは target_user_id で返る）
             extraction = extract_attendance_from_text(
