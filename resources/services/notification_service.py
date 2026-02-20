@@ -49,14 +49,33 @@ class NotificationService:
     def fetch_user_display_name(self, user_id: str) -> str:
         """
         ユーザーIDから表示名を取得します。
-        
+
+        まず Slack API で取得を試み、失敗した場合（別ワークスペースのユーザー等）は
+        Firestore の全ワークスペース統合ユーザーリストにフォールバックします。
+
         Args:
             user_id: SlackユーザーID
-            
+
         Returns:
             表示名（優先順位: display_name > real_name > user_id）
         """
-        return self.slack_wrapper.fetch_user_display_name(user_id)
+        clean_uid = user_id.replace("<@", "").replace(">", "").split("|")[0] if user_id else ""
+        name = self.slack_wrapper.fetch_user_display_name(user_id)
+
+        # Slack API が user_id をそのまま返した場合はフォールバック
+        if name == clean_uid:
+            try:
+                from resources.shared.db import get_global_user_list
+                for u in get_global_user_list():
+                    if u.get("user_id") == clean_uid:
+                        resolved = (u.get("display_name") or u.get("real_name") or "").strip()
+                        if resolved:
+                            logger.info(f"グローバルユーザーリストから名前解決: {clean_uid} -> {resolved}")
+                            return resolved
+            except Exception as e:
+                logger.warning(f"グローバルユーザーリストからの名前解決失敗: {e}")
+
+        return name
 
     # ==========================================
     # 勤怠通知（統一インターフェース）
