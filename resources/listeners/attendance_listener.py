@@ -29,7 +29,7 @@ from resources.shared.utils import get_user_email
 from resources.templates.modals import create_history_modal_view
 from resources.clients.slack_client import get_slack_client, fetch_message_in_channel
 from resources.services.notification_service import NotificationService
-from resources.shared.db import get_single_attendance_record, get_global_user_list, get_workspace_user_list
+from resources.shared.db import get_single_attendance_record, get_global_user_list
 from resources.templates.modals import (
     create_attendance_modal_view,
     create_attendance_delete_confirm_modal
@@ -374,9 +374,9 @@ class AttendanceListener(Listener):
         try:
             client = get_slack_client(team_id)
             sender_email: Optional[str] = get_user_email(client, user_id, logger)
-            workspace_user_list = get_workspace_user_list(team_id)
-            if not workspace_user_list:
-                workspace_user_list = get_global_user_list()
+            # AI抽出・照合用に get_global_user_list を使用（従来動作を維持。検索精度・表示順に影響）
+            # target_user_id の厳格検証・users_info 確認は別途実施して誤割当を防止
+            workspace_user_list = get_global_user_list()
 
             # スレッド返信の場合は親メッセージを取得し「親＋子」をセットでAIに渡す
             thread_context: Optional[str] = None
