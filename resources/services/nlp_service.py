@@ -470,3 +470,36 @@ def reply_has_late_cancellation_phrases(text: str) -> bool:
     if not text or not isinstance(text, str):
         return False
     return any(phrase in text for phrase in LATE_CANCELLATION_PHRASES)
+
+
+def is_early_morning_arrival(text: str, message_ts: str) -> bool:
+    """
+    スタンドアロンメッセージが「早朝出社報告（9時前の取消）」に該当するか判定する。
+
+    以下の両条件を満たす場合に True を返す:
+    1. LATE_CANCELLATION_PHRASES のいずれかを含む
+    2. メッセージの送信時刻が午前9時（09:00:00）より前
+
+    Args:
+        text: ユーザーが投稿したメッセージテキスト
+        message_ts: SlackメッセージのUnixタイムスタンプ文字列（例: "1708390000.000000"）
+
+    Returns:
+        早朝の出社報告と判定された場合は True、それ以外は False
+
+    Note:
+        スタンドアロンメッセージ（スレッド返信でない）に対してのみ使用する。
+        タイムゾーンはサーバーのローカルタイムを使用する（datetime.fromtimestamp）。
+        message_ts が不正な値の場合は False を返す（安全側に倒す）。
+    """
+    if not text or not isinstance(text, str):
+        return False
+    if not reply_has_late_cancellation_phrases(text):
+        return False
+    try:
+        ts_float = float(message_ts)
+        msg_dt = datetime.datetime.fromtimestamp(ts_float)
+        cutoff = msg_dt.replace(hour=9, minute=0, second=0, microsecond=0)
+        return msg_dt < cutoff
+    except (ValueError, TypeError):
+        return False
