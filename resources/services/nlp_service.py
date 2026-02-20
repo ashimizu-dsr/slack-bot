@@ -457,6 +457,9 @@ def extract_attendance_from_text(
 EXPLICIT_CANCELLATION_KEYWORDS = ("取消", "キャンセル", "取り消し", "削除")
 LATE_CANCELLATION_PHRASES = ("間に合った", "間に合いました", "出社した", "出社しました")
 
+# 時間・コンテキストを問わず常に取消とみなすフレーズ（「間に合った」等）
+ALWAYS_CANCEL_PHRASES = ("間に合った", "間に合いました")
+
 
 def reply_has_explicit_cancellation_keywords(text: str) -> bool:
     """返信文に明示的な取消キーワードが含まれるか。"""
@@ -503,3 +506,33 @@ def is_early_morning_arrival(text: str, message_ts: str) -> bool:
         return msg_dt < cutoff
     except (ValueError, TypeError):
         return False
+
+
+def should_cancel_without_ai(text: str, message_ts: str, is_thread_reply: bool = False) -> bool:
+    """
+    AI呼び出しをスキップして直接取消処理すべきか判定する。
+
+    以下のいずれかの条件を満たす場合 True を返す:
+    1. 「間に合った/間に合いました」を含む（時間・コンテキスト不問）
+    2. スレッド返信かつ「出社した/出社しました」を含む
+    3. スタンドアロンかつ「出社した/出社しました」かつ9時前
+
+    Args:
+        text: ユーザーが投稿したメッセージテキスト
+        message_ts: SlackメッセージのUnixタイムスタンプ文字列
+        is_thread_reply: スレッド返信の場合 True
+
+    Returns:
+        AI不使用で直接取消とすべき場合は True、それ以外は False
+    """
+    if not text or not isinstance(text, str):
+        return False
+    # パターン1: 「間に合った/間に合いました」→ 常に取消（時間・コンテキスト不問）
+    if any(p in text for p in ALWAYS_CANCEL_PHRASES):
+        return True
+    # パターン2 & 3: 「出社した/出社しました」→ コンテキスト依存
+    if any(p in text for p in ("出社した", "出社しました")):
+        if is_thread_reply:
+            return True
+        return is_early_morning_arrival(text, message_ts)
+    return False

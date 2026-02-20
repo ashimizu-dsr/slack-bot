@@ -22,7 +22,7 @@ from resources.services.nlp_service import (
     extract_attendance_from_text,
     reply_has_explicit_cancellation_keywords,
     reply_has_late_cancellation_phrases,
-    is_early_morning_arrival,
+    should_cancel_without_ai,
 )
 from resources.shared.utils import get_user_email
 from resources.templates.modals import create_history_modal_view
@@ -384,9 +384,11 @@ class AttendanceListener(Listener):
                 thread_context = f"親メッセージ:\n{parent_text}\n\n返信:\n{text}"
                 logger.info(f"スレッド返信を検出: 親+子をセットでAIに渡します thread_ts={thread_ts}")
 
-            # 早朝出社取消チェック（スタンドアロンメッセージ限定）
-            # スタンドアロンで「出社した」「間に合った」等かつ9時前 → AIをスキップして今日の記録を削除
-            if not thread_context and is_early_morning_arrival(text, ts):
+            # 取消フレーズの事前チェック（AIスキップ）
+            # ・「間に合った/間に合いました」→ 時間・コンテキスト不問で常に取消
+            # ・スレッド返信かつ「出社した/出社しました」→ 取消
+            # ・スタンドアロンかつ「出社した/出社しました」かつ9時前 → 取消
+            if should_cancel_without_ai(text, ts, is_thread_reply=bool(thread_context)):
                 logger.info(f"早朝出社報告を検出（AIスキップ・今日の記録を削除）: text={text[:30]}..., ts={ts}")
                 try:
                     client.reactions_add(channel=channel, name="outbox_tray", timestamp=ts)
