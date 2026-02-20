@@ -22,6 +22,7 @@ from resources.services.nlp_service import (
     extract_attendance_from_text,
     reply_has_explicit_cancellation_keywords,
     reply_has_late_cancellation_phrases,
+    resolve_target_user_for_cancellation,
     should_cancel_without_ai,
 )
 from resources.shared.utils import get_user_email
@@ -389,7 +390,15 @@ class AttendanceListener(Listener):
             # ・スレッド返信かつ「出社した/出社しました」→ 取消
             # ・スタンドアロンかつ「出社した/出社しました」かつ9時前 → 取消
             if should_cancel_without_ai(text, ts, is_thread_reply=bool(thread_context)):
-                logger.info(f"早朝出社報告を検出（AIスキップ・今日の記録を削除）: text={text[:30]}..., ts={ts}")
+                target_user_id = resolve_target_user_for_cancellation(
+                    text, user_id, workspace_user_list or None
+                )
+                if target_user_id != user_id:
+                    logger.info(
+                        f"他者報告を検出（取消対象: {target_user_id}, 送信者: {user_id}）: text={text[:30]}..."
+                    )
+                else:
+                    logger.info(f"早朝出社報告を検出（AIスキップ・今日の記録を削除）: text={text[:30]}..., ts={ts}")
                 try:
                     client.reactions_add(channel=channel, name="outbox_tray", timestamp=ts)
                 except Exception:
@@ -397,9 +406,9 @@ class AttendanceListener(Listener):
                 today_str = datetime.date.today().isoformat()
                 notification_service = NotificationService(client, self.attendance_service)
                 try:
-                    self.attendance_service.delete_attendance(team_id, user_id, today_str)
+                    self.attendance_service.delete_attendance(team_id, target_user_id, today_str)
                     notification_service.notify_attendance_change(
-                        record={"user_id": user_id, "date": today_str},
+                        record={"user_id": target_user_id, "date": today_str},
                         channel=channel,
                         thread_ts=ts,
                         is_delete=True

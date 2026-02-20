@@ -508,6 +508,72 @@ def is_early_morning_arrival(text: str, message_ts: str) -> bool:
         return False
 
 
+def resolve_target_user_for_cancellation(
+    text: str,
+    sender_user_id: str,
+    workspace_user_list: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """
+    取消フレーズ（「間に合った」等）を含むメッセージから、取消対象のuser_idを解決する。
+
+    「Xさんは間に合った」「Xさんは間に合いました」のように第三者の名前が含まれる場合、
+    workspace_user_listから該当するuser_idを返す。名前が含まれない場合は送信者を返す。
+
+    Args:
+        text: メッセージテキスト
+        sender_user_id: メッセージ送信者のuser_id
+        workspace_user_list: ワークスペースユーザー一覧 [{ user_id, real_name, display_name }, ...]
+
+    Returns:
+        取消対象のuser_id（解決できなければ sender_user_id）
+    """
+    if not text or not isinstance(text, str):
+        return sender_user_id
+    if not workspace_user_list:
+        return sender_user_id
+
+    # パターン: Xさんは間に合った / Xさんは間に合いました
+    match = re.search(r"(.+?)さんは(?:間に合った|間に合いました)", text)
+    if not match:
+        return sender_user_id
+
+    name_part = match.group(1).strip()
+    if not name_part:
+        return sender_user_id
+
+    # workspace_user_list から名前で照合（real_name, display_name）
+    # 優先順位: 完全一致 > 先頭一致 > 包含
+    def normalize(s: str) -> str:
+        return (s or "").replace(" ", "").strip()
+
+    name_norm = normalize(name_part)
+    candidates: List[tuple] = []  # (priority, user_id)
+
+    for u in workspace_user_list:
+        uid = u.get("user_id") or ""
+        if not uid:
+            continue
+        rn = (u.get("real_name") or "").strip()
+        dn = (u.get("display_name") or "").strip()
+
+        rn_norm = normalize(rn)
+        dn_norm = normalize(dn)
+
+        if rn == name_part or dn == name_part:
+            candidates.append((0, uid))  # 完全一致
+        elif rn_norm == name_norm or dn_norm == name_norm:
+            candidates.append((1, uid))  # スペース除く完全一致
+        elif rn.startswith(name_part) or dn.startswith(name_part):
+            candidates.append((2, uid))  # 先頭一致
+        elif name_part in rn or name_part in dn:
+            candidates.append((3, uid))  # 包含
+
+    if not candidates:
+        return sender_user_id
+    candidates.sort(key=lambda x: x[0])
+    return candidates[0][1]
+
+
 def should_cancel_without_ai(text: str, message_ts: str, is_thread_reply: bool = False) -> bool:
     """
     AI呼び出しをスキップして直接取消処理すべきか判定する。
