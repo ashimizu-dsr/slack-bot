@@ -489,11 +489,11 @@ class AttendanceListener(Listener):
             except Exception:
                 pass
 
-            # 2. 誰の勤怠として記録するか（メッセージ内の人名 → target_user_id）
-            target_user_id = extraction.get("target_user_id")
-            if target_user_id:
+            # 2. 誰の勤怠として記録するか（メッセージ内の人名 → target_email、email を主キーとして使用）
+            target_email = (extraction.get("target_email") or "").strip().lower()
+            if target_email:
                 if not workspace_user_list:
-                    logger.warning("target_user_id が指定されましたが workspace_user_list が空のため検証できません。記録を中断")
+                    logger.warning("target_email が指定されましたが workspace_user_list が空のため検証できません。記録を中断")
                     try:
                         client.chat_postEphemeral(
                             channel=channel,
@@ -503,55 +503,32 @@ class AttendanceListener(Listener):
                     except Exception:
                         pass
                     return
-                matched = next((u for u in workspace_user_list if (u.get("user_id") or "") == target_user_id), None)
+                matched = next(
+                    (u for u in workspace_user_list
+                     if (u.get("email") or "").strip().lower() == target_email),
+                    None,
+                )
                 if matched:
-                    effective_user_id = matched["user_id"]
-                    effective_email = (matched.get("email") or "").strip() or get_user_email(client, effective_user_id, logger)
-                    is_other_person = True
+                    effective_email = (matched.get("email") or "").strip()
+                    effective_user_id = matched.get("user_id") or ""
+                    is_other_person = bool(effective_user_id)
                 else:
                     logger.warning(
-                        f"target_user_id がワークスペースに存在しません: {target_user_id}, 記録を中断"
+                        f"target_email がユーザーリストに存在しません: {target_email}, 記録を中断"
                     )
                     try:
                         client.chat_postEphemeral(
                             channel=channel,
                             user=user_id,
-                            text="⚠️ メッセージ内の対象ユーザーを特定できませんでした。ユーザーがこのワークスペースに存在しないか、取得できない状態です。記録を中断しました。"
+                            text="⚠️ メッセージ内の対象ユーザーを特定できませんでした。記録を中断しました。"
                         )
                     except Exception:
                         pass
                     return
             else:
                 effective_user_id = user_id
-                effective_email = sender_email
+                effective_email = sender_email or ""
                 is_other_person = False
-
-            # 2b. 他者勤怠の場合は Slack API でユーザー存在確認（user_not_found 時は中断）
-            if is_other_person:
-                try:
-                    res = client.users_info(user=effective_user_id)
-                    if not res.get("ok") or res.get("error") == "user_not_found":
-                        logger.warning(f"users_info 失敗（user_not_found 等）: {effective_user_id}")
-                        try:
-                            client.chat_postEphemeral(
-                                channel=channel,
-                                user=user_id,
-                                text="⚠️ 対象ユーザーの情報を取得できませんでした。記録を中断しました。"
-                            )
-                        except Exception:
-                            pass
-                        return
-                except Exception as e:
-                    logger.warning(f"users_info 呼び出し失敗: {effective_user_id}, {e}")
-                    try:
-                        client.chat_postEphemeral(
-                            channel=channel,
-                            user=user_id,
-                            text="⚠️ 対象ユーザーの確認に失敗しました。記録を中断しました。"
-                        )
-                    except Exception:
-                        pass
-                    return
 
             # 3. 抽出結果をリスト化（複数日対応）
             attendances = [extraction]
