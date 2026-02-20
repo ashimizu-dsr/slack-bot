@@ -354,6 +354,24 @@ def extract_attendance_from_text(
             {
                 "role": "assistant",
                 "content": '{"is_attendance": true, "attendances": [{"date": "2026-01-29", "status": "other", "note": "在宅（11時から1時間程度中抜け）", "action": "save"}]}'
+            },
+            # 例16: 「間に合っています」= 遅刻・遅延報告の取り消し
+            {
+                "role": "user",
+                "content": "Today: 2026-01-28 (Tuesday)\nText: 間に合っています"
+            },
+            {
+                "role": "assistant",
+                "content": '{"is_attendance": true, "target_email": null, "attendances": [{"date": "2026-01-28", "status": "other", "note": "遅刻取消", "action": "delete"}]}'
+            },
+            # 例17: 「間に合ってます」= 遅刻・遅延報告の取り消し（口語短縮形）
+            {
+                "role": "user",
+                "content": "Today: 2026-01-28 (Tuesday)\nText: 間に合ってます"
+            },
+            {
+                "role": "assistant",
+                "content": '{"is_attendance": true, "target_email": null, "attendances": [{"date": "2026-01-28", "status": "other", "note": "遅刻取消", "action": "delete"}]}'
             }
         ]
         
